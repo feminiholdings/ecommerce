@@ -40,6 +40,7 @@ import {
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth, db } from "../firebase";
 import { checkIsAdminWhitelisted } from "../utils/adminWhitelist";
+import { bootstrapPrimaryAdmin, PRIMARY_ADMIN_EMAIL } from "../utils/adminWhitelist";
 import { doc, setDoc } from "firebase/firestore";
 import { ReceiptModal } from "../components/ReceiptModal";
 import { MpesaStkWaitingModal } from "../components/MpesaStkWaitingModal";
@@ -91,6 +92,7 @@ export const PortalView: React.FC = () => {
 
   // Authentication
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isAdminWhitelistedUser, setIsAdminWhitelistedUser] = useState(false);
 
@@ -170,6 +172,11 @@ export const PortalView: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
+      if (user?.email) {
+        checkIsAdminWhitelisted(user.email, user.uid).then(setIsAdmin);
+      } else {
+        setIsAdmin(false);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -604,6 +611,14 @@ export const PortalView: React.FC = () => {
 
           {/* Header Action Controls: ONLY TWO ICONS (Cart & Hamburger) */}
           <div className="flex items-center space-x-2 sm:space-x-2.5 shrink-0">
+            {isAdmin && (
+              <a
+                href="/"
+                className="px-3 py-1.5 rounded-xl bg-[#FACB00] text-[#030A91] font-black text-[10px] sm:text-xs hover:bg-yellow-400 transition-colors shadow-sm"
+              >
+                Access Admin Dashboard
+              </a>
+            )}
             {/* 1. Shopping Bag Icon Button with Counter Badge */}
             <button
               onClick={() => {
