@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { db, User, Product, InventoryMovement, StockTransfer, Sale, Quotation, Invoice, DeliveryNote, DeliveryNoteItem, PaymentReceipt, Customer, Supplier, PurchaseOrder, Expense } from './db.js';
+import { db, User, Product, InventoryMovement, StockTransfer, Sale, Quotation, Invoice, PaymentReceipt, Customer, Supplier, PurchaseOrder, Expense } from './db.js';
 import { requireAuth, requireRoles, createSession, revokeSession, checkRateLimit, recordFailedAttempt, resetRateLimit, AuthenticatedRequest } from './auth.js';
 import { fiscalizeTransaction, enqueueKraRetry, kraRetryQueue } from './kra.js';
 import { sendEmail, generateInvoiceEmailHtml, generateReceiptEmailHtml, generateQuotationEmailHtml, generateWelcomeEmailHtml, emailLogs } from './email.js';
@@ -44,7 +44,7 @@ const handleGoogleAuth = async (req: any, res: Response) => {
         id: 'usr-admin-moraasdorcah',
         name: userName || 'Dorcah Moraa (Primary Admin)',
         email: rawEmail,
-        passwordHash: '$2b$10$3A1c2fzBQW8e03oC/ufSEuU.Hgv3HJcNIhApUzmEOx7o9gxOkcXFm',
+        passwordHash: '',
         role: 'SUPER_ADMIN',
         branchId: 'all',
         phone: '0792021496',
@@ -56,6 +56,7 @@ const handleGoogleAuth = async (req: any, res: Response) => {
       user = newUser;
       await db.save();
     } else {
+      // Ensure root admin always has SUPER_ADMIN role and ACTIVE status
       user.role = 'SUPER_ADMIN';
       user.status = 'ACTIVE';
       user.branchId = 'all';
@@ -87,10 +88,12 @@ const handleGoogleAuth = async (req: any, res: Response) => {
     return res.status(403).json({ error: 'This account has been deactivated. Please contact your system administrator.' });
   }
 
+  // Privilege validation: if logging into Accountant portal, must have ACCOUNTANT, ADMIN, or SUPER_ADMIN role
   if (targetRole === 'ACCOUNTANT' && user.role !== 'ACCOUNTANT' && user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN') {
     return res.status(403).json({ error: 'This Google account lacks Accountant / Financial management privileges.' });
   }
 
+  // If logging into Admin portal, must have ADMIN or SUPER_ADMIN role
   if (targetRole === 'ADMIN' && user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN') {
     return res.status(403).json({ error: 'This Google account lacks Administrator privileges.' });
   }
@@ -165,37 +168,8 @@ apiRouter.post('/auth/login', async (req, res) => {
     });
   }
 
-  // 3. User lookup by email
-  let user = db.getData().users.find((u) => u.email.toLowerCase() === rawEmail);
-
-  // Ensure root administrator (moraasdorcah@gmail.com) always exists as SUPER_ADMIN
-  if (rawEmail === 'moraasdorcah@gmail.com') {
-    if (!user) {
-      const newUser: User = {
-        id: 'usr-admin-moraasdorcah',
-        name: 'Dorcah Moraa (Primary Admin)',
-        email: rawEmail,
-        passwordHash: '$2b$10$3A1c2fzBQW8e03oC/ufSEuU.Hgv3HJcNIhApUzmEOx7o9gxOkcXFm', // Admin@2026!
-        role: 'SUPER_ADMIN',
-        branchId: 'all',
-        phone: '0792021496',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString(),
-        lastLogin: new Date().toISOString(),
-      };
-      db.getData().users.push(newUser);
-      user = newUser;
-      await db.save();
-    } else {
-      user.role = 'SUPER_ADMIN';
-      user.status = 'ACTIVE';
-      if (!user.passwordHash) {
-        user.passwordHash = '$2b$10$3A1c2fzBQW8e03oC/ufSEuU.Hgv3HJcNIhApUzmEOx7o9gxOkcXFm';
-      }
-    }
-  }
-
-
+  // 3. Exact user lookup by email (NO direct admin fallback or role bypass)
+  const user = db.getData().users.find((u) => u.email.toLowerCase() === rawEmail);
 
   if (!user) {
     const failRecord = recordFailedAttempt(rateLimitKey);
@@ -1099,24 +1073,6 @@ apiRouter.get('/products/schools', requireAuth, (req, res) => {
   }
 });
 
-apiRouter.post('/products/repair', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const freshProducts = db.seedProductsFromInventoryCsv();
-    if (freshProducts && freshProducts.length > 0) {
-      db.getData().products = freshProducts;
-      await db.save();
-    }
-    return res.json({
-      success: true,
-      message: 'Catalogue successfully repaired and re-seeded',
-      count: db.getData().products.length,
-    });
-  } catch (err: any) {
-    console.error('[Catalogue Repair Error]', err);
-    return res.status(500).json({ error: 'Failed to repair catalogue', details: err.message });
-  }
-});
-
 // ==========================================
 // CUSTOMER PORTAL PUBLIC API ROUTES
 // ==========================================
@@ -1271,10 +1227,6 @@ apiRouter.post('/portal/checkout', async (req, res) => {
 
   if (!items || !items.length) {
     return res.status(400).json({ error: "Cart is empty. Please add items to checkout." });
-  }
-
-  if (!customerEmail) {
-    return res.status(401).json({ error: "Authentication required: Please sign in with your Google account before checking out." });
   }
 
   const branches = db.getData().branches;
@@ -2691,8 +2643,6 @@ apiRouter.post('/quotations', requireAuth, async (req: AuthenticatedRequest, res
     customerEmail: customerEmail || '',
     customerPhone: customerPhone || '',
     schoolOrOrg,
-    lpoNumber: req.body.lpoNumber || '',
-    deliveryAddress: req.body.deliveryAddress || '',
     items: quoteItems,
     subtotal: Number(subtotal.toFixed(2)),
     taxAmount: Number(taxAmount.toFixed(2)),
@@ -2850,13 +2800,6 @@ apiRouter.post('/invoices', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT'), as
     customerEmail,
     customerPhone,
     customerKraPin,
-    lpoNumber,
-    deliveryAddress,
-    generateDeliveryNote,
-    driverName,
-    driverPhone,
-    vehicleRegistration,
-    carrierType,
     items,
     dueDate,
     paymentTerms,
@@ -2928,8 +2871,6 @@ apiRouter.post('/invoices', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT'), as
     customerEmail: customerEmail || '',
     customerPhone: customerPhone || '',
     customerKraPin,
-    lpoNumber: lpoNumber || '',
-    deliveryAddress: deliveryAddress || '',
     items: invoiceItems,
     subtotal: Number(subtotal.toFixed(2)),
     taxAmount: Number(taxAmount.toFixed(2)),
@@ -2950,54 +2891,6 @@ apiRouter.post('/invoices', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT'), as
     createdAt: now,
     updatedAt: now,
   };
-
-  let createdDeliveryNote: DeliveryNote | null = null;
-  if (generateDeliveryNote) {
-    db.getData().deliveryNotes = db.getData().deliveryNotes || [];
-    const deliveryNoteNumber = db.getNextSequence('DN', db.getData().deliveryNotes, 'deliveryNoteNumber');
-    createdDeliveryNote = {
-      id: uuidv4(),
-      deliveryNoteNumber,
-      invoiceId: invoice.id,
-      invoiceNumber: invoice.invoiceNumber,
-      lpoNumber: lpoNumber || '',
-      branchId: invoice.branchId,
-      branchName: invoice.branchName,
-      customerId: invoice.customerId,
-      customerName: invoice.customerName,
-      customerEmail: invoice.customerEmail,
-      customerPhone: invoice.customerPhone,
-      customerKraPin: invoice.customerKraPin,
-      schoolOrOrg: invoice.customerName,
-      deliveryAddress: deliveryAddress || 'Uhuru Market Store Collection',
-      dispatchDate: now.split('T')[0],
-      driverName: driverName || '',
-      driverPhone: driverPhone || '',
-      vehicleRegistration: vehicleRegistration || '',
-      carrierType: carrierType || 'STORE_DISPATCH_VAN',
-      items: invoiceItems.map((it) => ({
-        productId: it.productId,
-        variantId: it.variantId,
-        productName: it.productName,
-        sku: it.sku,
-        size: it.size,
-        quantityOrdered: it.quantity,
-        quantityDispatched: it.quantity,
-        quantityReceived: it.quantity,
-        unitPrice: it.unitPrice,
-      })),
-      totalQuantity: invoiceItems.reduce((s, it) => s + it.quantity, 0),
-      status: 'DISPATCHED',
-      dispatchedBy: req.user!.id,
-      dispatchedByName: req.user!.name,
-      notes: notes || `Dispatched against Invoice ${invoice.invoiceNumber}`,
-      createdAt: now,
-      updatedAt: now,
-    };
-    db.getData().deliveryNotes.unshift(createdDeliveryNote);
-    invoice.deliveryNoteId = createdDeliveryNote.id;
-    invoice.deliveryNoteNumber = createdDeliveryNote.deliveryNoteNumber;
-  }
 
   db.getData().invoices.unshift(invoice);
 
@@ -3258,253 +3151,6 @@ apiRouter.post('/quotations/:id/email', requireAuth, async (req: AuthenticatedRe
   });
 
   return res.json({ success: true, result, sentTo: targetEmail });
-});
-
-// ==========================================
-// 9B. DELIVERY NOTES (WAYBILLS / DISPATCH)
-// ==========================================
-
-apiRouter.get('/delivery-notes', requireAuth, (req, res) => {
-  const { branchId, status, invoiceId, search } = req.query;
-  let notes = db.getData().deliveryNotes || [];
-
-  if (branchId && branchId !== 'all') {
-    notes = notes.filter((n) => n.branchId === branchId);
-  }
-  if (status) {
-    notes = notes.filter((n) => n.status === status);
-  }
-  if (invoiceId) {
-    notes = notes.filter((n) => n.invoiceId === invoiceId);
-  }
-  if (search && typeof search === 'string') {
-    const q = search.toLowerCase();
-    notes = notes.filter(
-      (n) =>
-        n.deliveryNoteNumber.toLowerCase().includes(q) ||
-        n.customerName.toLowerCase().includes(q) ||
-        (n.schoolOrOrg && n.schoolOrOrg.toLowerCase().includes(q)) ||
-        (n.invoiceNumber && n.invoiceNumber.toLowerCase().includes(q)) ||
-        (n.lpoNumber && n.lpoNumber.toLowerCase().includes(q))
-    );
-  }
-
-  return res.json(notes);
-});
-
-apiRouter.post('/delivery-notes', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT', 'STORE_KEEPER'), async (req: AuthenticatedRequest, res: Response) => {
-  const {
-    invoiceId,
-    quotationId,
-    lpoNumber,
-    branchId,
-    customerId,
-    customerName,
-    customerEmail,
-    customerPhone,
-    customerKraPin,
-    schoolOrOrg,
-    deliveryAddress,
-    driverName,
-    driverPhone,
-    vehicleRegistration,
-    carrierType,
-    trackingNumber,
-    items,
-    notes,
-  } = req.body;
-
-  if (!items || !items.length || !customerName) {
-    return res.status(400).json({ error: 'Customer name and line items are required' });
-  }
-
-  const branch = db.getData().branches.find((b) => b.id === branchId) || db.getData().branches[0];
-  const now = new Date().toISOString();
-  db.getData().deliveryNotes = db.getData().deliveryNotes || [];
-  const deliveryNoteNumber = db.getNextSequence('DN', db.getData().deliveryNotes, 'deliveryNoteNumber');
-
-  let invoiceNumber = '';
-  if (invoiceId) {
-    const inv = db.getData().invoices.find((i) => i.id === invoiceId);
-    if (inv) {
-      invoiceNumber = inv.invoiceNumber;
-      inv.deliveryNoteId = deliveryNoteNumber;
-      inv.deliveryNoteNumber = deliveryNoteNumber;
-    }
-  }
-
-  const deliveryItems: DeliveryNoteItem[] = items.map((it: any) => ({
-    productId: it.productId || 'prod-custom',
-    variantId: it.variantId || 'var-custom',
-    productName: it.productName,
-    sku: it.sku || 'SKU-CUSTOM',
-    size: it.size || 'Standard',
-    quantityOrdered: Number(it.quantityOrdered || it.quantity || 1),
-    quantityDispatched: Number(it.quantityDispatched || it.quantity || 1),
-    quantityReceived: Number(it.quantityReceived ?? it.quantityDispatched ?? it.quantity ?? 1),
-    unitPrice: Number(it.unitPrice || 0),
-    notes: it.notes || '',
-  }));
-
-  const totalQuantity = deliveryItems.reduce((s, it) => s + it.quantityDispatched, 0);
-
-  const deliveryNote: DeliveryNote = {
-    id: uuidv4(),
-    deliveryNoteNumber,
-    invoiceId,
-    invoiceNumber,
-    quotationId,
-    lpoNumber,
-    branchId: branch.id,
-    branchName: branch.name,
-    customerId: customerId || 'cust-generic',
-    customerName,
-    customerEmail: customerEmail || '',
-    customerPhone: customerPhone || '',
-    customerKraPin,
-    schoolOrOrg: schoolOrOrg || customerName,
-    deliveryAddress: deliveryAddress || 'Uhuru Market Flagship Collection',
-    dispatchDate: now.split('T')[0],
-    driverName: driverName || '',
-    driverPhone: driverPhone || '',
-    vehicleRegistration: vehicleRegistration || '',
-    carrierType: carrierType || 'STORE_DISPATCH_VAN',
-    trackingNumber: trackingNumber || '',
-    items: deliveryItems,
-    totalQuantity,
-    status: 'DISPATCHED',
-    dispatchedBy: req.user!.id,
-    dispatchedByName: req.user!.name,
-    notes,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  db.getData().deliveryNotes.unshift(deliveryNote);
-  await db.save();
-
-  db.logAudit({
-    userId: req.user!.id,
-    userName: req.user!.name,
-    userRole: req.user!.role,
-    branchId: branch.id,
-    branchName: branch.name,
-    action: 'DELIVERY_NOTE_CREATED',
-    entityType: 'DELIVERY_NOTE',
-    entityId: deliveryNote.deliveryNoteNumber,
-    details: `Issued delivery note ${deliveryNote.deliveryNoteNumber} for ${customerName} (${totalQuantity} units).`,
-    ipAddress: req.ip,
-  });
-
-  return res.status(201).json(deliveryNote);
-});
-
-apiRouter.post('/invoices/:id/delivery-note', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT', 'STORE_KEEPER'), async (req: AuthenticatedRequest, res: Response) => {
-  const inv = db.getData().invoices.find((i) => i.id === req.params.id);
-  if (!inv) return res.status(404).json({ error: 'Invoice not found' });
-
-  const { driverName, driverPhone, vehicleRegistration, carrierType, trackingNumber, deliveryAddress, notes } = req.body;
-  const now = new Date().toISOString();
-  db.getData().deliveryNotes = db.getData().deliveryNotes || [];
-  const deliveryNoteNumber = db.getNextSequence('DN', db.getData().deliveryNotes, 'deliveryNoteNumber');
-
-  const deliveryItems: DeliveryNoteItem[] = inv.items.map((it) => ({
-    productId: it.productId,
-    variantId: it.variantId,
-    productName: it.productName,
-    sku: it.sku,
-    size: it.size,
-    quantityOrdered: it.quantity,
-    quantityDispatched: it.quantity,
-    quantityReceived: it.quantity,
-    unitPrice: it.unitPrice,
-  }));
-
-  const deliveryNote: DeliveryNote = {
-    id: uuidv4(),
-    deliveryNoteNumber,
-    invoiceId: inv.id,
-    invoiceNumber: inv.invoiceNumber,
-    lpoNumber: inv.lpoNumber || req.body.lpoNumber || '',
-    branchId: inv.branchId,
-    branchName: inv.branchName,
-    customerId: inv.customerId,
-    customerName: inv.customerName,
-    customerEmail: inv.customerEmail,
-    customerPhone: inv.customerPhone,
-    customerKraPin: inv.customerKraPin,
-    schoolOrOrg: inv.customerName,
-    deliveryAddress: deliveryAddress || inv.deliveryAddress || 'Uhuru Market Flagship Collection',
-    dispatchDate: now.split('T')[0],
-    driverName: driverName || '',
-    driverPhone: driverPhone || '',
-    vehicleRegistration: vehicleRegistration || '',
-    carrierType: carrierType || 'STORE_DISPATCH_VAN',
-    trackingNumber: trackingNumber || '',
-    items: deliveryItems,
-    totalQuantity: deliveryItems.reduce((s, it) => s + it.quantityDispatched, 0),
-    status: 'DISPATCHED',
-    dispatchedBy: req.user!.id,
-    dispatchedByName: req.user!.name,
-    notes: notes || `Dispatched against Invoice ${inv.invoiceNumber}`,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  db.getData().deliveryNotes.unshift(deliveryNote);
-  inv.deliveryNoteId = deliveryNote.id;
-  inv.deliveryNoteNumber = deliveryNote.deliveryNoteNumber;
-
-  await db.save();
-
-  db.logAudit({
-    userId: req.user!.id,
-    userName: req.user!.name,
-    userRole: req.user!.role,
-    branchId: inv.branchId,
-    branchName: inv.branchName,
-    action: 'DELIVERY_NOTE_CREATED',
-    entityType: 'DELIVERY_NOTE',
-    entityId: deliveryNote.deliveryNoteNumber,
-    details: `Generated delivery note ${deliveryNote.deliveryNoteNumber} from Invoice ${inv.invoiceNumber}.`,
-    ipAddress: req.ip,
-  });
-
-  return res.status(201).json({ success: true, deliveryNote, invoice: inv });
-});
-
-apiRouter.put('/delivery-notes/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const note = (db.getData().deliveryNotes || []).find((n) => n.id === req.params.id);
-  if (!note) return res.status(404).json({ error: 'Delivery note not found' });
-
-  const { status, receivedBy, receivedByTitle, receiverSignatureNote, deliveredDate } = req.body;
-  const now = new Date().toISOString();
-
-  if (status) note.status = status;
-  if (receivedBy) note.receivedBy = receivedBy;
-  if (receivedByTitle) note.receivedByTitle = receivedByTitle;
-  if (receiverSignatureNote) note.receiverSignatureNote = receiverSignatureNote;
-  if (status === 'DELIVERED') {
-    note.deliveredDate = deliveredDate || now.split('T')[0];
-  }
-  note.updatedAt = now;
-
-  await db.save();
-
-  db.logAudit({
-    userId: req.user!.id,
-    userName: req.user!.name,
-    userRole: req.user!.role,
-    branchId: note.branchId,
-    branchName: note.branchName,
-    action: 'DELIVERY_NOTE_STATUS_UPDATED',
-    entityType: 'DELIVERY_NOTE',
-    entityId: note.deliveryNoteNumber,
-    details: `Updated delivery note ${note.deliveryNoteNumber} to status ${note.status}.`,
-    ipAddress: req.ip,
-  });
-
-  return res.json({ success: true, deliveryNote: note });
 });
 
 // ==========================================

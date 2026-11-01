@@ -261,56 +261,6 @@ export interface Invoice {
   updatedAt: string;
 }
 
-export interface DeliveryNoteItem {
-  productId: string;
-  variantId: string;
-  productName: string;
-  sku: string;
-  size: string;
-  quantityOrdered: number;
-  quantityDispatched: number;
-  quantityReceived?: number;
-  unitPrice?: number;
-  notes?: string;
-}
-
-export interface DeliveryNote {
-  id: string;
-  deliveryNoteNumber: string;
-  invoiceId?: string;
-  invoiceNumber?: string;
-  quotationId?: string;
-  quotationNumber?: string;
-  lpoNumber?: string;
-  branchId: string;
-  branchName: string;
-  customerId: string;
-  customerName: string;
-  customerEmail?: string;
-  customerPhone?: string;
-  customerKraPin?: string;
-  schoolOrOrg?: string;
-  deliveryAddress: string;
-  dispatchDate: string;
-  deliveredDate?: string;
-  driverName?: string;
-  driverPhone?: string;
-  vehicleRegistration?: string;
-  carrierType: 'STORE_DISPATCH_VAN' | 'COURIER_SERVICE' | 'CUSTOMER_PICKUP' | 'SCHOOL_BUS';
-  trackingNumber?: string;
-  items: DeliveryNoteItem[];
-  totalQuantity: number;
-  status: 'PENDING' | 'DISPATCHED' | 'IN_TRANSIT' | 'DELIVERED' | 'RETURNED';
-  dispatchedBy: string;
-  dispatchedByName: string;
-  receivedBy?: string;
-  receivedByTitle?: string;
-  receiverSignatureNote?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface PaymentReceipt {
   id: string;
   receiptNumber: string;
@@ -470,7 +420,6 @@ export interface DatabaseSchema {
   sales: Sale[];
   quotations: Quotation[];
   invoices: Invoice[];
-  deliveryNotes: DeliveryNote[];
   receipts: PaymentReceipt[];
   customers: Customer[];
   suppliers: Supplier[];
@@ -481,7 +430,7 @@ export interface DatabaseSchema {
   settings: SystemSettings;
 }
 
-const DATA_DIR = path.resolve('/app/applet/data');
+const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 class DatabaseEngine {
@@ -500,12 +449,10 @@ class DatabaseEngine {
   }
 
   private loadDatabase(): DatabaseSchema {
-    console.log(`[DEBUG] Attempting to load database from: ${DB_FILE}`);
     if (fs.existsSync(DB_FILE)) {
       try {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed: DatabaseSchema = JSON.parse(raw);
-        console.log(`[DEBUG] Successfully loaded database.json, size: ${raw.length} bytes`);
         let updated = false;
         if (parsed.products && Array.isArray(parsed.products) && parsed.products.length > 0) {
           // Sync image URLs from inventory CSV
@@ -542,21 +489,14 @@ class DatabaseEngine {
           updated = true;
         }
 
-        if (!Array.isArray(parsed.deliveryNotes)) {
-          parsed.deliveryNotes = [];
-          updated = true;
-        }
-
         if (updated) {
           this.data = parsed;
           this.saveDataDirect(parsed);
         }
         return parsed;
       } catch (err) {
-        console.error('[CRITICAL] Error reading or parsing database file:', err);
+        console.error('Error reading database file, reinitializing default data:', err);
       }
-    } else {
-      console.warn(`[WARNING] database.json not found at ${DB_FILE}`);
     }
     const defaultData = this.generateInitialSeed();
     this.saveDataDirect(defaultData);
@@ -746,7 +686,6 @@ class DatabaseEngine {
       sales,
       quotations,
       invoices,
-      deliveryNotes: [],
       receipts,
       customers,
       suppliers,
