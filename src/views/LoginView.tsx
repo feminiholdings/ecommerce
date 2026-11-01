@@ -333,7 +333,7 @@ export const LoginView: React.FC = () => {
     setUseEmailForStaff(false);
 
     if (role === 'ADMIN') {
-      setEmail(PRIMARY_ADMIN_EMAIL);
+      setEmail('');
       setPassword('');
     } else if (role === 'ACCOUNTANT') {
       setEmail('');
