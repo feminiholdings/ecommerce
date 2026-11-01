@@ -1099,6 +1099,24 @@ apiRouter.get('/products/schools', requireAuth, (req, res) => {
   }
 });
 
+apiRouter.post('/products/repair', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const freshProducts = db.seedProductsFromInventoryCsv();
+    if (freshProducts && freshProducts.length > 0) {
+      db.getData().products = freshProducts;
+      await db.save();
+    }
+    return res.json({
+      success: true,
+      message: 'Catalogue successfully repaired and re-seeded',
+      count: db.getData().products.length,
+    });
+  } catch (err: any) {
+    console.error('[Catalogue Repair Error]', err);
+    return res.status(500).json({ error: 'Failed to repair catalogue', details: err.message });
+  }
+});
+
 // ==========================================
 // CUSTOMER PORTAL PUBLIC API ROUTES
 // ==========================================
