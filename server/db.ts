@@ -481,7 +481,7 @@ export interface DatabaseSchema {
   settings: SystemSettings;
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = path.resolve('/app/applet/data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
 
 class DatabaseEngine {
@@ -500,10 +500,12 @@ class DatabaseEngine {
   }
 
   private loadDatabase(): DatabaseSchema {
+    console.log(`[DEBUG] Attempting to load database from: ${DB_FILE}`);
     if (fs.existsSync(DB_FILE)) {
       try {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed: DatabaseSchema = JSON.parse(raw);
+        console.log(`[DEBUG] Successfully loaded database.json, size: ${raw.length} bytes`);
         let updated = false;
         if (parsed.products && Array.isArray(parsed.products) && parsed.products.length > 0) {
           // Sync image URLs from inventory CSV
@@ -551,8 +553,10 @@ class DatabaseEngine {
         }
         return parsed;
       } catch (err) {
-        console.error('Error reading database file, reinitializing default data:', err);
+        console.error('[CRITICAL] Error reading or parsing database file:', err);
       }
+    } else {
+      console.warn(`[WARNING] database.json not found at ${DB_FILE}`);
     }
     const defaultData = this.generateInitialSeed();
     this.saveDataDirect(defaultData);
