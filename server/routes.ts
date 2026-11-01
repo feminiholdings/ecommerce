@@ -1386,6 +1386,7 @@ apiRouter.post('/portal/checkout', async (req, res) => {
     amount: totalAmount,
     paymentMethod: (sale.paymentMethod as any) || "MPESA",
     paymentReference: sale.paymentReference || "ONLINE-PORTAL",
+    notes: `POS Retail Sale at ${branch.name}`,
     receivedBy: "usr-online-portal",
     receivedByName: "Online Web Portal",
     cuNumber: sale.cuInvoiceNumber,
@@ -2468,7 +2469,7 @@ apiRouter.post('/sales', requireAuth, async (req: AuthenticatedRequest, res: Res
   return res.status(201).json({
     sale,
     receipt: receiptRecord,
-    qrCodeDataUrl: fiscalResult.qrCodeDataUrl,
+    qrCodeDataUrl: fiscalResult.kraQrCodeUrl,
   });
 });
 
@@ -4297,4 +4298,3 @@ apiRouter.post('/push/broadcast', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT
 
   return res.json(result);
 });
-
