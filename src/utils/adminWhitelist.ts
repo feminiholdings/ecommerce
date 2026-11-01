@@ -48,18 +48,12 @@ export async function checkIsAdminWhitelisted(email: string, uid?: string): Prom
 
   // Root Administrator is always whitelisted by constitutional design
   if (normalizedEmail === PRIMARY_ADMIN_EMAIL.toLowerCase()) {
-    // Attempt Firestore verification & background sync if online
-    try {
-      const emailDocRef = doc(db, 'admins', normalizedEmail);
-      const emailSnap = await getDoc(emailDocRef);
-      if (!emailSnap.exists()) {
-        bootstrapPrimaryAdmin(uid).catch((err) =>
-          logFirestoreError('write', `admins/${normalizedEmail}`, err)
-        );
-      }
-    } catch (err) {
-      logFirestoreError('get', `admins/${normalizedEmail}`, err);
-    }
+    // Non-blocking background Firestore sync
+    setTimeout(() => {
+      bootstrapPrimaryAdmin(uid).catch((err) =>
+        logFirestoreError('write', `admins/${normalizedEmail}`, err)
+      );
+    }, 0);
     return true;
   }
 

@@ -1,5 +1,4 @@
 import { doc, writeBatch, collection, getDocs, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, User as FirebaseUser } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { InventoryItem, Product } from '../types';
 import config from '../../firebase-applet-config.json';
@@ -93,18 +92,7 @@ export function formatProductForFirestore(prod: Product, timestamp?: string): Re
   };
 }
 
-/**
- * Prompt Google Sign-In with popup if not already signed in to Firebase Auth
- */
-export async function authenticateWithGoogle(): Promise<FirebaseUser> {
-  if (auth.currentUser) {
-    return auth.currentUser;
-  }
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  const result = await signInWithPopup(auth, provider);
-  return result.user;
-}
+
 
 /**
  * Save the entire catalogue of products into the Firestore database

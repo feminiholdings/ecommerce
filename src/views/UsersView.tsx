@@ -1242,7 +1242,7 @@ export const UsersView: React.FC = () => {
             <form onSubmit={handleAddAdminWhitelist} className="p-5 space-y-3">
               <div>
                 <label className="text-xs font-bold text-slate-700 uppercase block mb-1">
-                  Google Account / Email:
+                  Administrator Email:
                 </label>
                 <input
                   type="email"

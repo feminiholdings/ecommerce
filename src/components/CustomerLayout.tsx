@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Menu, X, ShieldCheck, Shirt, Info, FileText, Phone, Building, Search, LayoutGrid } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Menu, X, ShieldCheck, Shirt, Info, FileText, Phone, Building, Search, LayoutGrid, ShoppingCart } from 'lucide-react';
+import { getCustomerCart } from '../utils/customerSessionManager';
 
 interface CustomerLayoutProps {
   children: React.ReactNode;
@@ -7,13 +8,39 @@ interface CustomerLayoutProps {
 
 export const CustomerLayout: React.FC<CustomerLayoutProps> = ({ children }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [cartCount, setCartCount] = useState<number>(() => {
+    try {
+      const items = getCustomerCart();
+      return Array.isArray(items) ? items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  useEffect(() => {
+    const updateCount = () => {
+      try {
+        const items = getCustomerCart();
+        setCartCount(Array.isArray(items) ? items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0);
+      } catch {
+        setCartCount(0);
+      }
+    };
+
+    window.addEventListener('storage', updateCount);
+    const interval = setInterval(updateCount, 1500);
+    return () => {
+      window.removeEventListener('storage', updateCount);
+      clearInterval(interval);
+    };
+  }, []);
 
   const navLinks = [
     { label: 'School Uniforms', href: '/school-uniforms', icon: Shirt },
     { label: 'KMTC Uniforms', href: '/kmtc-uniforms', icon: Building },
     { label: 'Customized Uniforms', href: '/customized-uniforms', icon: ShieldCheck },
     { label: 'About', href: '/about', icon: Info },
-    { label: 'Policy', href: '/policy', icon: FileText },
+    { label: 'Policy & Terms', href: '/policy', icon: FileText },
     { label: 'Contact Us', href: '/contact', icon: Phone },
   ];
 
@@ -46,14 +73,33 @@ export const CustomerLayout: React.FC<CustomerLayoutProps> = ({ children }) => {
             </div>
           </div>
 
-          {/* Mobile Hamburger Button */}
-          <button
-            onClick={() => setIsMobileMenuOpen(true)}
-            className="lg:hidden p-2.5 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm"
-            aria-label="Open Menu"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
+          {/* Header Action Controls (Persistent Cart Bag & Mobile Menu) */}
+          <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+            {/* Customer Persistent Cart Button */}
+            <a
+              href="/portal?openCart=true"
+              className="relative p-2.5 sm:p-3 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm flex items-center space-x-1.5"
+              title={`Your Shopping Bag (${cartCount} items)`}
+              aria-label="View Shopping Bag"
+            >
+              <ShoppingCart className="w-5 h-5 text-[#030A91]" />
+              <span className="hidden sm:inline text-xs font-black text-[#030A91]">Cart</span>
+              {cartCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-[#FACB00] text-[#030A91] text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-xs">
+                  {cartCount > 99 ? '99+' : cartCount}
+                </span>
+              )}
+            </a>
+
+            {/* Mobile Hamburger Button */}
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="lg:hidden p-2.5 sm:p-3 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm"
+              aria-label="Open Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Desktop Menu */}

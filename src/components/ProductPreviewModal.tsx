@@ -314,6 +314,7 @@ export const ProductPreviewModal: React.FC<ProductPreviewModalProps> = ({ produc
                   Object.values(v.branchStock || {}).reduce((a: number, b: any) => a + Number(b), 0)
                 );
                 const isOutOfStock = stock <= 0;
+                const isLowStock = stock > 0 && stock <= 5;
                 const isSelected = selectedSize === v.size;
 
                 return (
@@ -321,17 +322,28 @@ export const ProductPreviewModal: React.FC<ProductPreviewModalProps> = ({ produc
                     key={v.id}
                     disabled={isOutOfStock}
                     onClick={() => setSelectedSize(v.size)}
-                    className={`flex flex-col items-center justify-center py-2.5 rounded-xl text-xs font-black transition-all border-2 cursor-pointer relative ${
+                    className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl text-xs font-black transition-all border-2 cursor-pointer relative ${
                       isSelected
                         ? "bg-[#030A91] text-[#FACB00] border-[#030A91] shadow-md scale-102"
                         : isOutOfStock 
-                          ? "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed opacity-50"
+                          ? "bg-slate-50 text-slate-400 border-slate-200/60 cursor-not-allowed opacity-60"
                           : "bg-white text-slate-800 border-slate-200 hover:border-[#030A91] hover:bg-blue-50/30"
                     }`}
                   >
-                    <span className="font-mono">{v.size}</span>
-                    <span className={`text-[8.5px] mt-0.5 ${isSelected ? 'text-white' : isOutOfStock ? 'text-rose-400 font-bold' : 'text-slate-400 font-medium'}`}>
-                      {isOutOfStock ? 'Out' : `KES ${v.sellingPrice}`}
+                    <span className="font-mono text-xs">{v.size}</span>
+                    <span className={`text-[8px] font-bold mt-0.5 ${
+                      isSelected 
+                        ? 'text-white' 
+                        : isOutOfStock 
+                          ? 'text-rose-500' 
+                          : isLowStock
+                            ? 'text-amber-600'
+                            : 'text-slate-500'
+                    }`}>
+                      {isOutOfStock ? 'Out of stock' : `${stock} left`}
+                    </span>
+                    <span className={`text-[8px] ${isSelected ? 'text-[#FACB00]' : 'text-slate-400'}`}>
+                      KES {v.sellingPrice}
                     </span>
                   </button>
                 );
@@ -340,44 +352,82 @@ export const ProductPreviewModal: React.FC<ProductPreviewModalProps> = ({ produc
           </div>
 
           {/* 3. SELECTED DETAIL DISPLAY */}
-          {selectedSize && currentVariant && (
-            <div className="bg-blue-50/70 rounded-2xl p-4 border border-blue-200/80 flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-200">
-              <div>
-                <div className="text-[10px] font-black text-[#030A91] uppercase tracking-wider">
-                  Price ({selectedColor} • Size {selectedSize})
+          {selectedSize && currentVariant && (() => {
+            const currentStock = Number(
+              Object.values(currentVariant.branchStock || {}).reduce((a: number, b: any) => a + Number(b), 0)
+            );
+            const isOutOfStock = currentStock <= 0;
+            const isLowStock = currentStock > 0 && currentStock <= 5;
+
+            return (
+              <div className={`rounded-2xl p-4 border flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-200 ${
+                isOutOfStock 
+                  ? 'bg-rose-50/70 border-rose-200' 
+                  : isLowStock 
+                    ? 'bg-amber-50/70 border-amber-200' 
+                    : 'bg-blue-50/70 border-blue-200/80'
+              }`}>
+                <div>
+                  <div className="text-[10px] font-black text-[#030A91] uppercase tracking-wider">
+                    Price ({selectedColor} • Size {selectedSize})
+                  </div>
+                  <div className="text-xl font-black text-[#030A91] mt-0.5">
+                    KES {currentVariant.sellingPrice.toLocaleString()}
+                  </div>
                 </div>
-                <div className="text-xl font-black text-[#030A91] mt-0.5">
-                  KES {currentVariant.sellingPrice.toLocaleString()}
+                <div className="text-right">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Stock Status</div>
+                  <div className={`text-xs font-bold px-2.5 py-0.5 rounded-lg border inline-block mt-0.5 ${
+                    isOutOfStock
+                      ? 'text-rose-700 bg-white border-rose-200'
+                      : isLowStock
+                        ? 'text-amber-800 bg-white border-amber-200'
+                        : 'text-emerald-700 bg-white border-emerald-200'
+                  }`}>
+                    {isOutOfStock ? '✕ Out of Stock' : isLowStock ? `⚠ Low Stock (${currentStock} left)` : `✓ In Stock (${currentStock} available)`}
+                  </div>
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Inventory</div>
-                <div className="text-xs font-bold text-emerald-700 bg-white px-2 py-0.5 rounded-lg border border-emerald-200 inline-block mt-0.5">
-                  ✓ Ready for Dispatch
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Modal Action Footer */}
         <div className="p-4 border-t border-slate-100 bg-white shrink-0">
-          <button
-            disabled={!selectedColor || !selectedSize || !currentVariant}
-            onClick={() => {
-              if (currentVariant) {
-                onAddToCart(product, currentVariant, selectedColor);
-              }
-            }}
-            className={`w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg transition-all flex items-center justify-center space-x-2.5 cursor-pointer ${
-              selectedColor && selectedSize && currentVariant
-                ? "bg-[#030A91] text-white hover:bg-blue-900 active:scale-[0.98] shadow-blue-900/20"
-                : "bg-slate-100 text-slate-400 cursor-not-allowed"
-            }`}
-          >
-            <Plus className="w-4 h-4 text-[#FACB00] stroke-[3]" />
-            <span>Add to Shopping Bag • {selectedColor} ({selectedSize || 'Size ?'})</span>
-          </button>
+          {(() => {
+            const currentStock = currentVariant 
+              ? Number(Object.values(currentVariant.branchStock || {}).reduce((a: number, b: any) => a + Number(b), 0))
+              : 0;
+            const isVariantOutOfStock = Boolean(currentVariant && currentStock <= 0);
+            const canAdd = Boolean(selectedColor && selectedSize && currentVariant && !isVariantOutOfStock);
+
+            return (
+              <button
+                disabled={!canAdd}
+                onClick={() => {
+                  if (currentVariant && !isVariantOutOfStock) {
+                    onAddToCart(product, currentVariant, selectedColor);
+                  }
+                }}
+                className={`w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg transition-all flex items-center justify-center space-x-2.5 cursor-pointer ${
+                  canAdd
+                    ? "bg-[#030A91] text-white hover:bg-blue-900 active:scale-[0.98] shadow-blue-900/20"
+                    : isVariantOutOfStock
+                      ? "bg-rose-100 text-rose-600 border border-rose-200 cursor-not-allowed"
+                      : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                }`}
+              >
+                {isVariantOutOfStock ? (
+                  <span>Out of Stock • Size {selectedSize}</span>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 text-[#FACB00] stroke-[3]" />
+                    <span>Add to Shopping Bag • {selectedColor} ({selectedSize || 'Select Size'})</span>
+                  </>
+                )}
+              </button>
+            );
+          })()}
         </div>
       </div>
 

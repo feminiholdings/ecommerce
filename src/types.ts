@@ -217,6 +217,8 @@ export interface Quotation {
   customerEmail: string;
   customerPhone: string;
   schoolOrOrg?: string;
+  lpoNumber?: string;
+  deliveryAddress?: string;
   items: QuotationItem[];
   subtotal: number;
   taxAmount: number;
@@ -258,6 +260,11 @@ export interface Invoice {
   customerPhone: string;
   customerKraPin?: string;
   quotationId?: string;
+  lpoNumber?: string;
+  deliveryAddress?: string;
+  deliveryNoteId?: string;
+  deliveryNoteNumber?: string;
+  carrierType?: string;
   items: InvoiceItem[];
   subtotal: number;
   taxAmount: number;
@@ -278,6 +285,56 @@ export interface Invoice {
   voidedBy?: string;
   createdBy: string;
   createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeliveryNoteItem {
+  productId: string;
+  variantId: string;
+  productName: string;
+  sku: string;
+  size: string;
+  quantityOrdered: number;
+  quantityDispatched: number;
+  quantityReceived?: number;
+  unitPrice?: number;
+  notes?: string;
+}
+
+export interface DeliveryNote {
+  id: string;
+  deliveryNoteNumber: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  quotationId?: string;
+  quotationNumber?: string;
+  lpoNumber?: string;
+  branchId: string;
+  branchName: string;
+  customerId: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  customerKraPin?: string;
+  schoolOrOrg?: string;
+  deliveryAddress: string;
+  dispatchDate: string;
+  deliveredDate?: string;
+  driverName?: string;
+  driverPhone?: string;
+  vehicleRegistration?: string;
+  carrierType: 'STORE_DISPATCH_VAN' | 'COURIER_SERVICE' | 'CUSTOMER_PICKUP' | 'SCHOOL_BUS';
+  trackingNumber?: string;
+  items: DeliveryNoteItem[];
+  totalQuantity: number;
+  status: 'PENDING' | 'DISPATCHED' | 'IN_TRANSIT' | 'DELIVERED' | 'RETURNED';
+  dispatchedBy: string;
+  dispatchedByName: string;
+  receivedBy?: string;
+  receivedByTitle?: string;
+  receiverSignatureNote?: string;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }

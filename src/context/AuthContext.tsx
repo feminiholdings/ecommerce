@@ -239,7 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginAsAdmin = async () => {
-    throw new Error('Direct 1-click admin login has been disabled for system security. Please enter your administrator credentials or authenticate via Google.');
+    throw new Error('Direct 1-click admin login has been disabled for system security. Please enter your administrator credentials.');
   };
 
   const loginWithGoogle = async (googleData: { email: string; name?: string; role?: string; idToken?: string }) => {

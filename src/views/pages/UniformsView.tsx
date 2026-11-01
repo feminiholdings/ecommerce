@@ -55,6 +55,15 @@ export const UniformsView: React.FC<UniformsViewProps> = ({ type }) => {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5 md:gap-6">
             {filteredProducts.map(p => {
               const variants = p.variants || [];
+              const totalStock = variants.reduce(
+                (sum: number, v: any) => {
+                  const bStock = Object.values(v.branchStock || {}).reduce((s: number, n: any): number => s + (Number(n) || 0), 0) as number;
+                  return sum + bStock;
+                },
+                0
+              );
+              const isOutOfStock = totalStock <= 0;
+              const isLowStock = totalStock > 0 && totalStock <= 5;
               const minPrice = variants.length ? Math.min(...variants.map((v: any) => v.sellingPrice)) : 0;
               return (
                 <div 
@@ -68,19 +77,40 @@ export const UniformsView: React.FC<UniformsViewProps> = ({ type }) => {
                       <img 
                         src={normalizeImageUrl(p.imageUrl || "")} 
                         alt={p.name} 
-                        className="w-full h-40 object-cover group-hover:scale-105 transition-transform duration-500" 
+                        className={`w-full h-40 object-cover group-hover:scale-105 transition-transform duration-500 ${isOutOfStock ? "grayscale-30 opacity-80" : ""}`} 
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = "/logo.png";
                         }}
                       />
-                      {p.school && (
-                        <span className="absolute top-2 left-2 bg-[#030A91]/85 group-hover:bg-[#030A91] backdrop-blur-xs text-[#FACB00] text-[9px] font-black uppercase px-2 py-0.5 rounded-md shadow-xs truncate max-w-[90%] transition-colors">
-                          {p.school}
-                        </span>
+
+                      {/* Full-width Stock Status Banner at bottom of image */}
+                      {isOutOfStock ? (
+                        <div className="absolute bottom-0 left-0 right-0 bg-rose-600/95 backdrop-blur-md text-white text-[10px] font-black uppercase py-1.5 text-center shadow-md z-10 tracking-wider">
+                          Out of Stock
+                        </div>
+                      ) : isLowStock ? (
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#FACB00]/95 backdrop-blur-md text-[#030A91] text-[10px] font-black uppercase py-1.5 text-center shadow-md z-10 tracking-wider">
+                          Low Stock: {totalStock} Left
+                        </div>
+                      ) : (
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#FACB00]/95 backdrop-blur-md text-[#030A91] text-[10px] font-black uppercase py-1.5 text-center shadow-md z-10 tracking-wider">
+                          In Stock: {totalStock} Available
+                        </div>
                       )}
                     </div>
                     <h3 className="font-bold text-xs sm:text-sm text-slate-900 group-hover:text-[#030A91] line-clamp-2 transition-colors leading-snug">{p.name}</h3>
-                    <p className="text-[11px] text-slate-500 mt-1">{p.school || p.category || 'Official Garment'}</p>
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-[11px] text-slate-500">{p.school || p.category || 'Official Garment'}</p>
+                      {isOutOfStock ? (
+                        <span className="text-[9px] text-rose-600 font-extrabold bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded">
+                          Out of stock
+                        </span>
+                      ) : (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${isLowStock ? "text-amber-800 bg-amber-50 border-amber-200" : "text-emerald-800 bg-emerald-50 border-emerald-200"}`}>
+                          {totalStock} available
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {minPrice > 0 && (
                     <div className="pt-3 mt-3 border-t border-slate-100 group-hover:border-slate-200 flex items-center justify-between transition-colors">
@@ -88,8 +118,12 @@ export const UniformsView: React.FC<UniformsViewProps> = ({ type }) => {
                         <span className="text-[9px] text-slate-400 block font-bold uppercase">Price</span>
                         <span className="text-xs font-black text-[#030A91]">KES {minPrice.toLocaleString()}</span>
                       </div>
-                      <span className="bg-blue-50 text-[#030A91] group-hover:bg-[#030A91] group-hover:text-white group-hover:shadow-xs px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all">
-                        View &rarr;
+                      <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        isOutOfStock 
+                          ? "bg-slate-100 text-slate-400" 
+                          : "bg-blue-50 text-[#030A91] group-hover:bg-[#030A91] group-hover:text-white group-hover:shadow-xs"
+                      }`}>
+                        {isOutOfStock ? "Unavailable" : "View →"}
                       </span>
                     </div>
                   )}

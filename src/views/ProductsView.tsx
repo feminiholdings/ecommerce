@@ -46,7 +46,6 @@ import {
   saveProductToFirestore,
   deleteProductFromFirestore,
   getFirestoreInventoryStats,
-  authenticateWithGoogle,
 } from '../utils/firestoreInventorySync';
 import { auth } from '../firebase';
 import { SkuImageManagerModal } from '../components/SkuImageManagerModal';
@@ -312,15 +311,6 @@ export const ProductsView: React.FC = () => {
     setSyncProgress({ current: 0, total: products.length });
 
     try {
-      if (!auth.currentUser && promptAuth) {
-        notify({
-          type: 'INFO',
-          title: 'Google Admin Authentication',
-          message: 'Connecting with your Google Account (moraasdorcah@gmail.com) for secure Firestore write access...',
-        });
-        await authenticateWithGoogle();
-      }
-
       const res = await syncCatalogueToFirestore(products, (saved, total) => {
         setSyncProgress({ current: saved, total });
       });

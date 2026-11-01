@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth, db } from "../firebase";
+import { checkIsAdminWhitelisted } from "../utils/adminWhitelist";
 import { doc, setDoc } from "firebase/firestore";
 import { ReceiptModal } from "../components/ReceiptModal";
 import { MpesaStkWaitingModal } from "../components/MpesaStkWaitingModal";
@@ -46,6 +47,16 @@ import { StatementPreviewModal } from "../components/StatementPreviewModal";
 import { SmartImage } from "../components/SmartImage";
 import { ProductPreviewModal } from "../components/ProductPreviewModal";
 import { normalizeImageUrl } from "./ProductsView";
+import {
+  CustomerCartItem,
+  saveCustomerWorkspace,
+  getCustomerWorkspace,
+  clearCustomerCart,
+  clearCustomerWorkspace,
+  saveCustomerScrollPosition,
+  restoreCustomerScrollPosition,
+  hasMeaningfulCustomerWork,
+} from "../utils/customerSessionManager";
 
 interface CartItem {
   productId: string;
@@ -62,25 +73,55 @@ interface CartItem {
 
 export const PortalView: React.FC = () => {
   const { notify } = useNotification();
+
+  // 1. Read existing customer workspace synchronously to prevent any data loss on reload
+  const initialWorkspace = useRef(getCustomerWorkspace()).current;
+  const hadRestoredWork = useRef(hasMeaningfulCustomerWork(initialWorkspace)).current;
+  const initialRestoredCartCount = useRef(initialWorkspace?.cart?.length || 0).current;
+  const [restoredBannerDismissed, setRestoredBannerDismissed] = useState(false);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [schools, setSchools] = useState<string[]>([]);
-  const [selectedSchool, setSelectedSchool] = useState<string>("ALL");
-  const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedSchool, setSelectedSchool] = useState<string>(() => initialWorkspace?.selectedSchool || "ALL");
+  const [selectedCategory, setSelectedCategory] = useState<string>(() => initialWorkspace?.selectedCategory || "ALL");
+  const [searchQuery, setSearchQuery] = useState(() => initialWorkspace?.searchQuery || "");
   const [isLoading, setIsLoading] = useState(true);
+
+
 
   // Authentication
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isAdminWhitelistedUser, setIsAdminWhitelistedUser] = useState(false);
 
-  // Cart & Checkout
-  const [cart, setCart] = useState<CartItem[]>([]);
+  useEffect(() => {
+    let isMounted = true;
+    const verifyAdmin = async () => {
+      if (currentUser?.email) {
+        try {
+          const whitelisted = await checkIsAdminWhitelisted(currentUser.email, currentUser.uid);
+          if (isMounted) setIsAdminWhitelistedUser(whitelisted);
+        } catch {
+          if (isMounted) setIsAdminWhitelistedUser(false);
+        }
+      } else {
+        if (isMounted) setIsAdminWhitelistedUser(false);
+      }
+    };
+    verifyAdmin();
+    return () => { isMounted = false; };
+  }, [currentUser]);
+
+  // Cart & Checkout (Synchronously populated with customer items)
+  const [cart, setCart] = useState<CartItem[]>(() =>
+    Array.isArray(initialWorkspace?.cart) ? (initialWorkspace.cart as CartItem[]) : []
+  );
   const [isCartExpanded, setIsCartExpanded] = useState(false);
-  const [mobileTab, setMobileTab] = useState<"catalog" | "cart">("catalog");
+  const [mobileTab, setMobileTab] = useState<"catalog" | "cart">(() => initialWorkspace?.mobileTab || "catalog");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"MPESA" | "CARD">("MPESA");
-  const [mpesaPhone, setMpesaPhone] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"MPESA" | "CARD">(() => initialWorkspace?.paymentMethod || "MPESA");
+  const [mpesaPhone, setMpesaPhone] = useState(() => initialWorkspace?.mpesaPhone || "");
   const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   // Customer Historical Orders & Purchases
@@ -133,6 +174,43 @@ export const PortalView: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  const handleGoogleSignIn = async () => {
+    setIsAuthLoading(true);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    try {
+      const result = await signInWithPopup(auth, provider);
+      notify({
+        type: "SUCCESS",
+        title: "Signed In with Google",
+        message: `Welcome ${result.user.displayName || "Customer"}! You can now checkout seamlessly.`,
+      });
+    } catch (err: any) {
+      if (err.code === "auth/unauthorized-domain" || err.code === "auth/invalid-continue-uri") {
+        notify({
+          type: "INFO",
+          title: "Domain Authorization Needed",
+          message: "Google Sign-In domain/continue-uri is pending authorization in Firebase Console (Authentication > Settings > Authorized domains). You can complete checkout seamlessly with M-Pesa & Phone as a guest!",
+        });
+      } else if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
+        notify({ type: "ERROR", title: "Sign-In Failed", message: err.message || "Failed to authenticate with Google." });
+      }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      notify({ type: "INFO", title: "Signed Out", message: "You have signed out of your Google account." });
+    } catch (err: any) {
+      notify({ type: "ERROR", title: "Error", message: err.message });
+    }
+  };
+
+
+
   const loadPortalData = async () => {
     setIsLoading(true);
     try {
@@ -163,56 +241,99 @@ export const PortalView: React.FC = () => {
     loadPortalData();
   }, []);
 
-  // Handle direct product linking (e.g., from UniformsView)
+  // Handle direct product linking & workspace restoration (open cart, active modal, scroll position)
   useEffect(() => {
     if (!isLoading && products.length > 0) {
       const params = new URLSearchParams(window.location.search);
+      const openCartParam = params.get('openCart');
+      if (openCartParam === 'true') {
+        setIsCartExpanded(true);
+        setMobileTab('cart');
+        window.history.replaceState({}, '', '/portal');
+      }
+
       const prodId = params.get('product');
       if (prodId) {
-        const found = products.find(p => p.id === prodId);
+        const found = products.find((p) => p.id === prodId);
         if (found) {
           setActiveProductForVariant(found);
-          // Clean up URL without reload
           window.history.replaceState({}, '', '/portal');
         }
+      } else if (initialWorkspace?.activeProductId) {
+        const found = products.find((p) => p.id === initialWorkspace.activeProductId);
+        if (found) {
+          setActiveProductForVariant(found);
+        }
       }
+
+      // Smoothly restore scroll position to exact viewport location
+      restoreCustomerScrollPosition();
     }
   }, [isLoading, products]);
 
-  const handleGoogleSignIn = async () => {
-    setIsAuthLoading(true);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: "select_account" });
-    try {
-      const result = await signInWithPopup(auth, provider);
-      notify({
-        type: "SUCCESS",
-        title: "Signed In with Google",
-        message: `Welcome ${result.user.displayName || "Customer"}! You can now checkout seamlessly.`,
-      });
-    } catch (err: any) {
-      if (err.code === "auth/unauthorized-domain") {
-        notify({
-          type: "INFO",
-          title: "Guest Checkout Ready",
-          message: "Google Sign-In is pending domain authorization in Firebase Console. You can complete checkout seamlessly with M-Pesa & Phone as a guest!",
-        });
-      } else if (err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request") {
-        notify({ type: "ERROR", title: "Sign-In Failed", message: err.message || "Failed to authenticate with Google." });
-      }
-    } finally {
-      setIsAuthLoading(false);
-    }
-  };
+  // Continuous auto-save of active customer workspace
+  useEffect(() => {
+    saveCustomerWorkspace({
+      cart,
+      mpesaPhone,
+      paymentMethod,
+      selectedCategory,
+      selectedSchool,
+      searchQuery,
+      isCartExpanded,
+      mobileTab,
+      activeProductId: activeProductForVariant ? activeProductForVariant.id : null,
+    });
+  }, [
+    cart,
+    mpesaPhone,
+    paymentMethod,
+    selectedCategory,
+    selectedSchool,
+    searchQuery,
+    isCartExpanded,
+    mobileTab,
+    activeProductForVariant,
+  ]);
 
-  const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      notify({ type: "INFO", title: "Signed Out", message: "You have signed out of your Google account." });
-    } catch (err: any) {
-      notify({ type: "ERROR", title: "Error", message: err.message });
-    }
-  };
+  // Capture scroll position before reload / navigating away
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveCustomerScrollPosition();
+      saveCustomerWorkspace({
+        cart,
+        mpesaPhone,
+        paymentMethod,
+        selectedCategory,
+        selectedSchool,
+        searchQuery,
+        isCartExpanded,
+        mobileTab,
+        activeProductId: activeProductForVariant ? activeProductForVariant.id : null,
+      });
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, [
+    cart,
+    mpesaPhone,
+    paymentMethod,
+    selectedCategory,
+    selectedSchool,
+    searchQuery,
+    isCartExpanded,
+    mobileTab,
+    activeProductForVariant,
+  ]);
+
+
+
+
 
   // Categories
   const categories = useMemo(() => {
@@ -298,18 +419,17 @@ export const PortalView: React.FC = () => {
 
   // Checkout Execution
   const handleCheckout = async () => {
-    if (!cart.length) {
-      notify({ type: "WARNING", title: "Cart Empty", message: "Please select uniforms before checking out." });
+    if (!currentUser) {
+      notify({
+        type: "WARNING",
+        title: "Sign-In Required",
+        message: "Please sign in with Google before checking out so your uniform orders and receipts are linked to your customer profile.",
+      });
       return;
     }
 
-    if (!currentUser) {
-      notify({
-        type: "INFO",
-        title: "Google Sign-In Required",
-        message: "Please sign in with Google to complete your checkout and receive your official eTIMS receipt.",
-      });
-      await handleGoogleSignIn();
+    if (!cart.length) {
+      notify({ type: "WARNING", title: "Cart Empty", message: "Please select uniforms before checking out." });
       return;
     }
 
@@ -351,12 +471,21 @@ export const PortalView: React.FC = () => {
   };
 
   const executeCheckoutFinalize = async (overrideRef?: string) => {
+    if (!currentUser || !currentUser.email) {
+      notify({
+        type: "WARNING",
+        title: "Sign-In Required",
+        message: "You must be signed in with Google before you can complete an order.",
+      });
+      return;
+    }
+
     setIsCheckingOut(true);
     try {
       const paymentRef = overrideRef || stkCheckoutId || `MPESA-${mpesaPhone.trim()}-${Date.now().toString().slice(-6)}`;
 
       const payload = {
-        customerName: currentUser?.displayName || "Online Customer",
+        customerName: currentUser?.displayName || currentUser?.email?.split('@')[0] || "Online Customer",
         customerEmail: currentUser?.email || undefined,
         customerPhone: mpesaPhone.trim() || undefined,
         paymentMethod,
@@ -381,6 +510,7 @@ export const PortalView: React.FC = () => {
       setIsReceiptModalOpen(true);
       setCart([]);
       setMpesaPhone("");
+      clearCustomerCart();
 
       // Real-time Firestore sync for Admin Analytics & Customer Records
       try {
@@ -395,11 +525,11 @@ export const PortalView: React.FC = () => {
         }, { merge: true });
 
         // 2. Save customer analytics record to /customer_analytics
-        if (currentUser?.email) {
-          const custId = currentUser.email.replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (mpesaPhone.trim()) {
+          const custId = `phone_${mpesaPhone.trim()}`;
           await setDoc(doc(db, 'customer_analytics', custId), {
-            email: currentUser.email,
-            name: currentUser.displayName || 'Online Customer',
+            phone: mpesaPhone.trim(),
+            name: 'Online Customer',
             lastOrderDate: nowIso,
             totalOrders: (window as any)._custOrderCount ? (window as any)._custOrderCount + 1 : 1,
             totalSpent: (window as any)._custTotalSpent ? (window as any)._custTotalSpent + totalAmount : totalAmount,
@@ -492,12 +622,12 @@ export const PortalView: React.FC = () => {
               )}
             </button>
 
-            {/* 2. Hamburger Menu Icon Button (Google Account & Profile Drawer) */}
+            {/* 2. Hamburger Menu Icon Button */}
             <button
               onClick={() => setIsMobileMenuOpen(true)}
-              className="p-2.5 sm:p-3 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm"
-              title="Menu & Google Account"
-              aria-label="Open Menu & Google Account"
+              className="p-2.5 sm:p-3 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm cursor-pointer"
+              title="Menu & Orders"
+              aria-label="Open Menu & Orders"
             >
               <Menu className="w-5 h-5 text-[#030A91]" />
             </button>
@@ -509,7 +639,7 @@ export const PortalView: React.FC = () => {
           <a href="/kmtc-uniforms" className="hover:text-[#FACB00] transition-colors">KMTC Uniforms</a>
           <a href="/customized-uniforms" className="hover:text-[#FACB00] transition-colors">Customized Uniforms</a>
           <a href="/about" className="hover:text-[#FACB00] transition-colors">About</a>
-          <a href="/policy" className="hover:text-[#FACB00] transition-colors">Policy</a>
+          <a href="/policy" className="hover:text-[#FACB00] transition-colors">Policy & Terms</a>
           <a href="/contact" className="hover:text-[#FACB00] transition-colors">Contact Us</a>
         </div>
 
@@ -549,6 +679,59 @@ export const PortalView: React.FC = () => {
             mobileTab === "catalog" ? "block" : "hidden lg:flex"
           }`}
         >
+          {/* Customer Workspace Restored Notification Banner */}
+          {hadRestoredWork && !restoredBannerDismissed && (
+            <div className="w-full bg-gradient-to-r from-[#02066F] via-[#030A91] to-blue-900 text-white rounded-2xl p-3.5 sm:p-4 shadow-md flex items-center justify-between gap-3 border border-blue-400/40 animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center space-x-3 min-w-0">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#FACB00] text-[#030A91] flex items-center justify-center shrink-0 font-black shadow-sm">
+                  <Sparkles className="w-5 h-5 text-[#030A91]" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center space-x-2">
+                    <h4 className="text-xs sm:text-sm font-extrabold text-white truncate">
+                      Welcome Back! Your Work Has Been Restored
+                    </h4>
+                    <span className="bg-emerald-500 text-white text-[9px] font-black uppercase px-2 py-0.2 rounded-full shrink-0">
+                      Auto-Saved
+                    </span>
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-blue-100 mt-0.5 leading-snug">
+                    {initialRestoredCartCount > 0
+                      ? `We preserved your cart (${initialRestoredCartCount} item${initialRestoredCartCount > 1 ? 's' : ''}), checkout inputs, and uniform search filters.`
+                      : 'We preserved your filters, uniform search terms, and active workspace.'}{' '}
+                    You didn't lose a single thing.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 shrink-0">
+                {initialRestoredCartCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileTab('cart');
+                      setIsCartExpanded(true);
+                      window.scrollTo({ top: 350, behavior: 'smooth' });
+                    }}
+                    className="text-xs font-black bg-[#FACB00] hover:bg-amber-400 text-[#030A91] px-3 py-1.5 rounded-xl transition-all shadow-xs cursor-pointer flex items-center space-x-1"
+                  >
+                    <span>View Cart ({initialRestoredCartCount})</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setRestoredBannerDismissed(true)}
+                  className="text-blue-200 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Dismiss notice"
+                  aria-label="Dismiss notice"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Search & School Filters Bar */}
           <div className="bg-white hover:bg-slate-50/40 p-3.5 sm:p-4 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md hover:border-slate-300 transition-all duration-300 space-y-3">
             <div className="flex flex-col sm:flex-row gap-2.5">
@@ -704,6 +887,15 @@ export const PortalView: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
               {filteredProducts.map((p, index) => {
                 const variants = p.variants || [];
+                const totalStock = variants.reduce(
+                  (sum: number, v: any) => {
+                    const bStock = Object.values(v.branchStock || {}).reduce((s: number, n: any): number => s + (Number(n) || 0), 0) as number;
+                    return sum + bStock;
+                  },
+                  0
+                );
+                const isOutOfStock = totalStock <= 0;
+                const isLowStock = totalStock > 0 && totalStock <= 5;
                 const minPrice = variants.length ? Math.min(...variants.map((v: any) => v.sellingPrice)) : 0;
                 const maxPrice = variants.length ? Math.max(...variants.map((v: any) => v.sellingPrice)) : 0;
                 const hasMultiplePrices = minPrice !== maxPrice && maxPrice > 0;
@@ -722,18 +914,25 @@ export const PortalView: React.FC = () => {
                         alt={p.name}
                         loading={index < 4 ? "eager" : "lazy"}
                         fetchPriority={index < 4 ? "high" : "auto"}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${isOutOfStock ? "grayscale-30 opacity-80" : ""}`}
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = "/logo.png";
                         }}
                       />
-                      <span className="absolute top-2 left-2 bg-[#030A91]/80 group-hover:bg-[#030A91] backdrop-blur-xs text-[#FACB00] text-[9px] font-black uppercase px-2 py-0.5 rounded-md shadow-xs truncate max-w-[85%] transition-colors">
-                        {p.school}
-                      </span>
-                      {p.category && (
-                        <span className="absolute bottom-2 left-2 bg-white/90 group-hover:bg-white backdrop-blur-xs text-slate-700 text-[9px] font-bold px-1.5 py-0.5 rounded shadow-xs transition-colors">
-                          {p.category}
-                        </span>
+
+                      {/* Full-width Stock Status Banner at bottom of image */}
+                      {isOutOfStock ? (
+                        <div className="absolute bottom-0 left-0 right-0 bg-rose-600/95 backdrop-blur-md text-white text-[10px] font-black uppercase py-1.5 text-center shadow-md z-10 tracking-wider">
+                          Out of Stock
+                        </div>
+                      ) : isLowStock ? (
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#FACB00]/95 backdrop-blur-md text-[#030A91] text-[10px] font-black uppercase py-1.5 text-center shadow-md z-10 tracking-wider">
+                          Low Stock: {totalStock} Left
+                        </div>
+                      ) : (
+                        <div className="absolute bottom-0 left-0 right-0 bg-[#FACB00]/95 backdrop-blur-md text-[#030A91] text-[10px] font-black uppercase py-1.5 text-center shadow-md z-10 tracking-wider">
+                          In Stock: {totalStock} Available
+                        </div>
                       )}
                     </div>
 
@@ -743,9 +942,20 @@ export const PortalView: React.FC = () => {
                         <h3 className="font-black text-xs text-slate-900 group-hover:text-[#030A91] line-clamp-2 leading-tight transition-colors">
                           {p.name}
                         </h3>
-                        <p className="text-[10px] text-slate-400 group-hover:text-slate-500 mt-0.5 font-medium transition-colors">
-                          {variants.length} {variants.length === 1 ? "size variant" : "sizes available"}
-                        </p>
+                        <div className="flex items-center justify-between mt-1.5">
+                          <p className="text-[10px] text-slate-500 font-medium transition-colors">
+                            {variants.length} {variants.length === 1 ? "size variant" : "sizes"}
+                          </p>
+                          {isOutOfStock ? (
+                            <span className="text-[9px] text-rose-700 font-extrabold bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded">
+                              Out of stock
+                            </span>
+                          ) : (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${isLowStock ? "text-amber-800 bg-amber-50 border-amber-200" : "text-emerald-800 bg-emerald-50 border-emerald-200"}`}>
+                              {totalStock} available
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="pt-1 flex items-center justify-between border-t border-slate-100 group-hover:border-slate-200 transition-colors">
@@ -755,8 +965,12 @@ export const PortalView: React.FC = () => {
                             KES {minPrice.toLocaleString()} {hasMultiplePrices && `+`}
                           </span>
                         </div>
-                        <span className="bg-blue-50 text-[#030A91] group-hover:bg-[#030A91] group-hover:text-white group-hover:shadow-xs px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all">
-                          Select &rarr;
+                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                          isOutOfStock 
+                            ? "bg-slate-100 text-slate-500" 
+                            : "bg-blue-50 text-[#030A91] group-hover:bg-[#030A91] group-hover:text-white group-hover:shadow-xs"
+                        }`}>
+                          {isOutOfStock ? "Out of stock" : "Select →"}
                         </span>
                       </div>
                     </div>
@@ -791,36 +1005,15 @@ export const PortalView: React.FC = () => {
             )}
           </div>
 
-          {/* Customer Profile Banner */}
-          <div className="p-3 rounded-2xl bg-blue-50/70 hover:bg-blue-50/95 border border-blue-100 shadow-2xs hover:shadow-sm hover:border-blue-200 transition-all flex items-center justify-between">
-            {currentUser ? (
-              <div className="flex items-center space-x-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-[#030A91] text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
-                  {(currentUser.displayName || "C")[0]}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-black text-slate-900 truncate">
-                    {currentUser.displayName || "Google Customer"}
-                  </p>
-                  <p className="text-[10px] text-emerald-700 font-bold flex items-center">
-                    <ShieldCheck className="w-3 h-3 mr-0.5 inline" /> Verified Customer
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between w-full">
-                <div>
-                  <p className="text-xs font-bold text-slate-800">Checkout as Guest / Sign In</p>
-                  <p className="text-[10px] text-slate-500">Sign in with Google for instant eTIMS receipt</p>
-                </div>
-                <button
-                  onClick={handleGoogleSignIn}
-                  className="bg-[#030A91] text-white text-[10px] font-black px-2.5 py-1.5 rounded-lg hover:bg-blue-900 hover:shadow-xs active:scale-95 transition-all cursor-pointer"
-                >
-                  Sign In
-                </button>
-              </div>
-            )}
+          {/* Customer Fast Checkout Banner */}
+          <div className="p-3 rounded-2xl bg-blue-50/70 hover:bg-blue-50/95 border border-blue-100 shadow-2xs hover:shadow-sm hover:border-blue-200 transition-all flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-full bg-[#030A91] text-[#FACB00] flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+              <ShieldCheck className="w-4 h-4 text-[#FACB00]" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-slate-800">Direct Customer Checkout</p>
+              <p className="text-[10px] text-slate-500">Official KRA eTIMS QR-coded thermal receipt included</p>
+            </div>
           </div>
 
           {/* Cart Items List - shows 2 items by default, rest collapsed */}
@@ -833,6 +1026,23 @@ export const PortalView: React.FC = () => {
               </div>
             ) : (
               <>
+                {cart.length > 2 && (
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200/80 mb-1">
+                    <span>
+                      {isCartExpanded
+                        ? `Showing all ${cart.length} items in cart`
+                        : `Showing 2 of ${cart.length} items in cart`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsCartExpanded(!isCartExpanded)}
+                      className="text-[#030A91] hover:underline font-bold text-[10px] cursor-pointer"
+                    >
+                      {isCartExpanded ? "Collapse" : "Expand All"}
+                    </button>
+                  </div>
+                )}
+
                 {(isCartExpanded ? cart : cart.slice(0, 2)).map((item) => (
                   <div key={item.variantId} className="pt-2.5 p-2 rounded-xl hover:bg-slate-50 hover:shadow-2xs border border-transparent hover:border-slate-200 transition-all flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
@@ -876,12 +1086,12 @@ export const PortalView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsCartExpanded(!isCartExpanded)}
-                      className="w-full py-2 px-3 bg-blue-50/70 hover:bg-blue-100/70 hover:shadow-xs border border-blue-200/60 rounded-xl text-[11px] font-bold text-[#030A91] flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                      className="w-full py-2.5 px-3 bg-blue-50/80 hover:bg-blue-100 border border-blue-200/80 rounded-xl text-[11px] font-bold text-[#030A91] flex items-center justify-center space-x-1.5 transition-all shadow-2xs active:scale-[0.99] cursor-pointer"
                     >
                       <span>
                         {isCartExpanded
-                          ? "Collapse extra items"
-                          : `+ Show ${cart.length - 2} more item${cart.length - 2 > 1 ? "s" : ""} in cart`}
+                          ? `▲ Collapse to 2 items (hiding ${cart.length - 2} items)`
+                          : `▼ Show ${cart.length - 2} more item${cart.length - 2 > 1 ? "s" : ""} in cart`}
                       </span>
                       <ChevronDown
                         className={`w-3.5 h-3.5 transition-transform duration-200 ${
@@ -981,21 +1191,40 @@ export const PortalView: React.FC = () => {
             )}
           </div>
 
+          {/* Sign In Required Notice / Google Sign In Button in Checkout */}
+          {!currentUser && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 mb-3">
+              <div className="flex items-center space-x-1.5 text-amber-800 font-bold text-xs">
+                <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Google Sign-In Required for Checkout</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isAuthLoading}
+                className="w-full flex items-center justify-center space-x-2 py-2.5 px-3 rounded-lg bg-white hover:bg-slate-50 text-slate-800 border border-amber-300 font-bold text-xs shadow-xs transition-all cursor-pointer"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                <span>{isAuthLoading ? "Signing in..." : "Sign in with Google to Checkout"}</span>
+              </button>
+            </div>
+          )}
+
           {/* Complete Checkout Button */}
           <button
             onClick={handleCheckout}
-            disabled={cart.length === 0 || isCheckingOut}
+            disabled={cart.length === 0 || isCheckingOut || !currentUser}
             className="w-full py-3.5 rounded-2xl bg-[#030A91] hover:bg-blue-900 active:scale-[0.99] text-white font-black text-xs uppercase tracking-wider shadow-md disabled:opacity-50 transition-all flex items-center justify-center space-x-2 cursor-pointer"
           >
             {isCheckingOut ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin text-[#FACB00]" />
                 <span>Processing & Fiscalizing eTIMS...</span>
-              </>
-            ) : !currentUser ? (
-              <>
-                <span>Sign in with Google to Checkout</span>
-                <ArrowRight className="w-4 h-4 text-[#FACB00]" />
               </>
             ) : (
               <>
@@ -1060,15 +1289,7 @@ export const PortalView: React.FC = () => {
 
             </div>
 
-            {/* User status info */}
-            {currentUser && (
-              <div className="hidden lg:flex items-center space-x-1.5 pl-2 border-l border-slate-300 text-xs text-slate-600 truncate">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-                <span className="truncate max-w-[160px] font-medium">
-                  {currentUser.displayName || currentUser.email}
-                </span>
-              </div>
-            )}
+
             
             {/* Powered by Link */}
             <a 
@@ -1100,28 +1321,41 @@ export const PortalView: React.FC = () => {
             </div>
 
             {/* Direct Checkout Button */}
-            <button
-              onClick={handleCheckout}
-              disabled={cart.length === 0 || isCheckingOut}
-              className="py-3 px-5 lg:px-7 rounded-2xl bg-[#030A91] hover:bg-blue-900 active:scale-95 text-white font-black text-xs lg:text-sm uppercase tracking-wider shadow-md transition-all flex items-center space-x-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isCheckingOut ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-[#FACB00]" />
-                  <span>Processing...</span>
-                </>
-              ) : !currentUser ? (
-                <>
-                  <span>Sign In & Pay</span>
-                  <ArrowRight className="w-4 h-4 text-[#FACB00]" />
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4 text-[#FACB00]" />
-                  <span>Complete Checkout</span>
-                </>
-              )}
-            </button>
+            {!currentUser ? (
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isAuthLoading || cart.length === 0}
+                className="py-3 px-5 lg:px-6 rounded-2xl bg-[#FACB00] hover:bg-[#e0b600] active:scale-95 text-[#030A91] font-black text-xs lg:text-sm uppercase tracking-wider shadow-md transition-all flex items-center space-x-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title="Google sign-in is required before checking out"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                <span>{isAuthLoading ? "Signing in..." : "Sign In to Checkout"}</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleCheckout}
+                disabled={cart.length === 0 || isCheckingOut}
+                className="py-3 px-5 lg:px-7 rounded-2xl bg-[#030A91] hover:bg-blue-900 active:scale-95 text-white font-black text-xs lg:text-sm uppercase tracking-wider shadow-md transition-all flex items-center space-x-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {isCheckingOut ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-[#FACB00]" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-[#FACB00]" />
+                    <span>Complete Checkout</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </nav>
@@ -1206,7 +1440,7 @@ export const PortalView: React.FC = () => {
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = `Naisia_Purchase_Statement_Thermal_${currentUser?.email?.split('@')[0] || 'Customer'}_${Date.now()}.txt`;
+          link.download = `Naisia_Purchase_Statement_Thermal_${Date.now()}.txt`;
           link.click();
           URL.revokeObjectURL(url);
           notify({
@@ -1272,6 +1506,53 @@ export const PortalView: React.FC = () => {
 
             {/* Drawer Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* GOOGLE AUTHENTICATION ACCOUNT CARD */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 shadow-sm">
+                <div className="text-[10px] font-black uppercase tracking-wider text-[#030A91] mb-2 flex items-center justify-between">
+                  <span>Customer Account</span>
+                  <span className="text-xs font-bold text-blue-700">Google Secure Auth</span>
+                </div>
+                {currentUser ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center space-x-3 p-2.5 bg-white rounded-xl border border-blue-100 shadow-2xs">
+                      <div className="w-10 h-10 rounded-full bg-[#030A91] text-[#FACB00] flex items-center justify-center font-black text-sm shrink-0">
+                        {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : (currentUser.email ? currentUser.email.charAt(0).toUpperCase() : 'C')}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-black text-xs text-slate-900 truncate">{currentUser.displayName || 'Customer'}</p>
+                        <p className="text-[10px] text-slate-500 truncate">{currentUser.email}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleSignOut}
+                      className="w-full flex items-center justify-center space-x-2 py-2.5 px-3 rounded-xl bg-white hover:bg-red-50 text-red-600 border border-red-200 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    <p className="text-xs text-slate-600">
+                      Sign in with Google to track your orders, view past purchases, and checkout seamlessly.
+                    </p>
+                    <button
+                      onClick={handleGoogleSignIn}
+                      disabled={isAuthLoading}
+                      className="w-full flex items-center justify-center space-x-2.5 py-3 px-4 rounded-xl bg-white hover:bg-slate-50 active:scale-98 text-slate-800 border border-slate-300 font-bold text-xs shadow-md transition-all cursor-pointer"
+                    >
+                      <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                      </svg>
+                      <span>{isAuthLoading ? "Signing in..." : "Sign in with Google"}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* BRAND QUICK NAVIGATION (MOBILE ONLY ACCESSIBILITY) */}
               <div className="bg-[#FACB00]/10 border border-[#FACB00]/30 rounded-2xl p-3.5 shadow-2xs">
                 <div className="text-[10px] font-black uppercase tracking-wider text-[#030A91] mb-2.5 flex items-center gap-1.5">
@@ -1284,7 +1565,7 @@ export const PortalView: React.FC = () => {
                     { label: 'KMTC Uniforms', href: '/kmtc-uniforms', icon: Building },
                     { label: 'Customized', href: '/customized-uniforms', icon: ShieldCheck },
                     { label: 'About Us', href: '/about', icon: Info },
-                    { label: 'Our Policy', href: '/policy', icon: FileText },
+                    { label: 'Policy & Terms', href: '/policy', icon: FileText },
                     { label: 'Contact', href: '/contact', icon: Phone },
                   ].map((link) => (
                     <a
@@ -1299,225 +1580,28 @@ export const PortalView: React.FC = () => {
                 </div>
               </div>
 
-              {/* GOOGLE AUTHENTICATION & USER PROFILE CARD (STAYS PROMINENT INSIDE HAMBURGER) */}
-              <div className="bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 hover:border-slate-300 rounded-2xl p-3.5 shadow-2xs hover:shadow-md transition-all duration-300">
-                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2.5 flex items-center justify-between">
-                  <span>Google Account</span>
+              {/* CUSTOMER PORTAL ORDER INFORMATION */}
+              <div className="bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 hover:border-slate-300 rounded-2xl p-4 shadow-2xs transition-all duration-300">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                  <span>Customer Support & Orders</span>
                   <span className="text-emerald-700 font-bold flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    Verified Customer
+                    Verified Naisiae Portal
                   </span>
                 </div>
-
-                {currentUser ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center space-x-3">
-                      {currentUser.photoURL ? (
-                        <img
-                          src={currentUser.photoURL}
-                          alt={currentUser.displayName || "User"}
-                          className="w-12 h-12 rounded-2xl object-cover ring-2 ring-[#030A91] shadow-xs"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-2xl bg-[#030A91] text-[#FACB00] flex items-center justify-center font-black text-lg shadow-xs">
-                          {(currentUser.displayName || currentUser.email || "C")[0].toUpperCase()}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-black text-sm text-slate-900 truncate">
-                          {currentUser.displayName || "Google Customer"}
-                        </p>
-                        <p className="text-xs text-slate-500 truncate">{currentUser.email}</p>
-                        <span className="inline-flex items-center text-[10px] font-bold text-[#030A91] bg-blue-50 px-2 py-0.5 rounded-md mt-1">
-                          Online Portal Active
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        handleSignOut();
-                        setIsMobileMenuOpen(false);
-                      }}
-                      className="w-full flex items-center justify-center space-x-2 py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-colors cursor-pointer active:scale-98"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Sign Out from Google</span>
-                    </button>
-
-                    {/* Historical Orders & Purchases */}
-                    <div className="mt-3 pt-3 border-t border-slate-200/80 space-y-2.5">
-                      <div className="text-[10px] font-black uppercase tracking-wider text-[#030A91] flex items-center justify-between">
-                        <span>My Historical Orders & Purchases</span>
-                        <span className="px-2 py-0.5 rounded-full bg-blue-100 text-[#030A91] font-bold">
-                          {customerOrders.length}
-                        </span>
-                      </div>
-
-                      {isLoadingOrders ? (
-                        <div className="py-4 text-center text-xs text-slate-500 animate-pulse">
-                          Loading past purchases...
-                        </div>
-                      ) : customerOrders.length === 0 ? (
-                        <div className="py-3 text-center text-xs text-slate-500 bg-white rounded-xl border border-dashed border-slate-200 p-2">
-                          No previous orders yet. Your online purchases will appear here instantly.
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {/* Download Statement Options (Thermal Receipt or CSV) */}
-                          <div className="flex gap-1.5">
-                            <button
-                              onClick={() => {
-                                const totalSpent = customerOrders.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
-                                const customerName = currentUser?.displayName || currentUser?.email || 'Valued Customer';
-                                const customerEmail = currentUser?.email || '';
-                                
-                                let text = `==========================================\n`;
-                                text += `         NAISIA TEXTILES LTD            \n`;
-                                text += `      CUSTOMER PURCHASE STATEMENT       \n`;
-                                text += `==========================================\n`;
-                                text += `CUSTOMER:  ${customerName}\n`;
-                                text += `EMAIL:     ${customerEmail}\n`;
-                                text += `DATE:      ${new Date().toLocaleString()}\n`;
-                                text += `ORDERS:    ${customerOrders.length}\n`;
-                                text += `LIFETIME:  KES ${totalSpent.toLocaleString()}\n`;
-                                text += `==========================================\n\n`;
-
-                                for (const o of customerOrders) {
-                                  text += `RECEIPT #: ${o.receiptNumber}\n`;
-                                  text += `DATE:      ${new Date(o.createdAt).toLocaleString()}\n`;
-                                  text += `BRANCH:    ${o.branchName || 'Nairobi HQ'}\n`;
-                                  text += `PAYMENT:   ${o.paymentMethod || 'CASH'} (${o.paymentReference || 'N/A'})\n`;
-                                  text += `------------------------------------------\n`;
-                                  text += `ITEM DESCRIPTION        QTY  UNIT   TOTAL\n`;
-                                  if (o.items && o.items.length > 0) {
-                                    for (const it of o.items) {
-                                      const desc = `${it.productName} (${it.size})`.slice(0, 20).padEnd(21);
-                                      const q = String(it.quantity).padStart(3);
-                                      const pr = String(it.unitPrice).padStart(6);
-                                      const tot = String(it.total || (it.quantity * it.unitPrice)).padStart(6);
-                                      text += `${desc} ${q} ${pr} ${tot}\n`;
-                                    }
-                                  }
-                                  text += `------------------------------------------\n`;
-                                  text += `Subtotal: KES ${(o.subtotal || 0).toLocaleString()}\n`;
-                                  text += `VAT 16%:  KES ${(o.totalTax || 0).toLocaleString()}\n`;
-                                  text += `TOTAL:    KES ${(o.totalAmount || 0).toLocaleString()}\n`;
-                                  text += `==========================================\n\n`;
-                                }
-                                text += `THANK YOU FOR SHOPPING WITH NAISIA TEXTILES\n`;
-                                
-                                setStatementText(text);
-                                setIsStatementModalOpen(true);
-                              }}
-                              className="flex-1 py-2 px-2 bg-[#030A91] hover:bg-blue-900 active:scale-98 text-white rounded-xl text-[11px] font-bold flex items-center justify-center space-x-1 shadow-xs transition-all cursor-pointer"
-                              title="Preview Thermal Receipt format statement"
-                            >
-                              <Download className="w-3.5 h-3.5 text-[#FACB00] shrink-0" />
-                              <span>Preview Statement</span>
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                const totalSpent = customerOrders.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
-                                let csv = `NAISIA TEXTILES LTD - CUSTOMER PURCHASE STATEMENT\n`;
-                                csv += `Customer: "${currentUser?.displayName || currentUser?.email || 'Valued Customer'}"\n`;
-                                csv += `Email: "${currentUser?.email || ''}\n`;
-                                csv += `Statement Date: "${new Date().toLocaleString()}"\n`;
-                                csv += `Total Orders: ${customerOrders.length}\n`;
-                                csv += `Total Lifetime Spend (KES): ${totalSpent.toLocaleString()}\n`;
-                                csv += `---------------------------------------------------\n\n`;
-                                csv += `Receipt Number,Date,Branch,Payment Method,Payment Reference,Subtotal (KES),VAT (KES),Total Amount (KES),Items Summary\n`;
-
-                                for (const o of customerOrders) {
-                                  const itemsSummary = (o.items || [])
-                                    .map((i: any) => `${i.productName} (Size ${i.size}) x${i.quantity}`)
-                                    .join('; ');
-                                  csv += `"${o.receiptNumber}","${new Date(o.createdAt).toLocaleString()}","${o.branchName || 'Nairobi'}","${o.paymentMethod || 'CASH'}","${o.paymentReference || ''}",${o.subtotal || 0},${o.totalTax || 0},${o.totalAmount || 0},"${itemsSummary}"\n`;
-                                }
-
-                                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                                const url = URL.createObjectURL(blob);
-                                const link = document.createElement('a');
-                                link.href = url;
-                                link.download = `Naisia_Purchase_Statement_${currentUser?.email?.split('@')[0] || 'Customer'}_${Date.now()}.csv`;
-                                link.click();
-                                URL.revokeObjectURL(url);
-                                notify({
-                                  type: 'SUCCESS',
-                                  title: 'CSV Statement Downloaded',
-                                  message: `Purchase statement with ${customerOrders.length} orders downloaded as CSV.`
-                                });
-                              }}
-                              className="flex-1 py-2 px-2 bg-slate-800 hover:bg-slate-900 active:scale-98 text-white rounded-xl text-[11px] font-bold flex items-center justify-center space-x-1 shadow-xs transition-all cursor-pointer"
-                              title="Download Spreadsheet CSV format statement"
-                            >
-                              <Download className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                              <span>Spreadsheet CSV</span>
-                            </button>
-                          </div>
-
-                          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                            {customerOrders.map((order) => (
-                              <div key={order.id} className="bg-white hover:bg-slate-50 p-2.5 rounded-xl border border-slate-200 hover:border-[#030A91]/40 shadow-2xs hover:shadow-md transition-all duration-200 space-y-1.5 text-xs">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-black text-[#030A91] font-mono text-[11px]">
-                                    {order.receiptNumber}
-                                  </span>
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                    {order.status || 'COMPLETED'}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-slate-600 space-y-0.5">
-                                  <p className="font-semibold text-slate-800">
-                                    {order.items?.length || 0} items • KES {(order.totalAmount || 0).toLocaleString()}
-                                  </p>
-                                  <p className="text-[10px] text-slate-400">
-                                    {new Date(order.createdAt).toLocaleString()} • {order.branchName || 'Nairobi'}
-                                  </p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                <p className="text-xs text-slate-600 leading-relaxed mb-3">
+                  Orders are processed instantaneously with official KRA eTIMS QR-coded thermal receipts generated on checkout.
+                </p>
+                <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs space-y-1.5 text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Contact Helplines:</span>
+                    <span className="font-bold text-[#030A91]">0792021496 / 0112264870</span>
                   </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                      Sign in with Google for instantaneous 1-click checkout and automated KRA eTIMS purchase receipts.
-                    </p>
-                    <button
-                      onClick={async () => {
-                        await handleGoogleSignIn();
-                        setIsMobileMenuOpen(false);
-                      }}
-                      disabled={isAuthLoading}
-                      className="w-full flex items-center justify-center space-x-2.5 bg-white border border-slate-300 hover:bg-slate-100 hover:shadow-sm active:scale-95 text-slate-800 py-2.5 px-3 rounded-xl text-xs font-black shadow-xs transition-all cursor-pointer"
-                    >
-                      <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                        <path
-                          fill="#4285F4"
-                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                        />
-                        <path
-                          fill="#34A853"
-                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                        />
-                        <path
-                          fill="#FBBC05"
-                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                        />
-                        <path
-                          fill="#EA4335"
-                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                        />
-                      </svg>
-                      <span>{isAuthLoading ? "Connecting..." : "Sign in with Google"}</span>
-                    </button>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Store Unit:</span>
+                    <span className="font-bold">Uhuru Market, Nairobi</span>
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Portal Quick Navigation Links */}
@@ -1593,20 +1677,22 @@ export const PortalView: React.FC = () => {
                 </p>
               </div>
 
-              {/* Management Portal Access Link */}
-              <div className="pt-2 border-t border-slate-200">
-                <a
-                  href="/erp"
-                  className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl bg-gradient-to-r from-[#02066F] to-[#030A91] text-[#FACB00] text-xs font-black shadow-md hover:opacity-95 active:scale-98 transition-all"
-                >
-                  <Lock className="w-4 h-4" />
-                  <span>Management Portal</span>
-                  <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                </a>
-                <p className="text-[10px] text-slate-400 text-center mt-1.5">
-                  Restricted to authorized organization personnel
-                </p>
-              </div>
+              {/* Management Portal Access Link - ONLY for whitelisted admins/accountants */}
+              {currentUser && isAdminWhitelistedUser && (
+                <div className="pt-2 border-t border-slate-200">
+                  <a
+                    href="/erp"
+                    className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl bg-gradient-to-r from-[#02066F] to-[#030A91] text-[#FACB00] text-xs font-black shadow-md hover:opacity-95 active:scale-98 transition-all"
+                  >
+                    <Lock className="w-4 h-4" />
+                    <span>Admin Portal</span>
+                    <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                  </a>
+                  <p className="text-[10px] text-emerald-600 font-bold text-center mt-1.5">
+                    Authorized Administrator Account Verified
+                  </p>
+                </div>
+              )}
 
               {/* Powered by Link (Mobile Drawer) */}
               <div className="pt-4 text-center">

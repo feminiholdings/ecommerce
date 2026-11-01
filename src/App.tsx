@@ -95,7 +95,7 @@ const AppContent: React.FC = () => {
       document.head.appendChild(robotsMeta);
     }
 
-    const publicPaths = ['/', '/portal', '/about', '/policy', '/contact', '/school-uniforms', '/kmtc-uniforms', '/customized-uniforms'];
+    const publicPaths = ['/', '/portal', '/about', '/policy', '/terms', '/terms-and-conditions', '/contact', '/school-uniforms', '/kmtc-uniforms', '/customized-uniforms'];
     const isProductPage = /^\/product\/[^/]+\/?$/.test(path);
     const isInternalArea = !publicPaths.includes(path) && !isProductPage && path !== '/erp' && path !== '/login';
     
@@ -118,7 +118,7 @@ const AppContent: React.FC = () => {
     return <PortalView />;
   }
   if (normalizedPath === '/about') return <AboutView />;
-  if (normalizedPath === '/policy') return <PolicyView />;
+  if (normalizedPath === '/policy' || normalizedPath === '/terms' || normalizedPath === '/terms-and-conditions') return <PolicyView />;
   if (normalizedPath === '/contact') return <ContactUsView />;
   if (normalizedPath === '/school-uniforms') return <UniformsView type="School Uniforms" />;
   if (normalizedPath === '/kmtc-uniforms') return <UniformsView type="KMTC Uniforms" />;

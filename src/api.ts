@@ -331,6 +331,28 @@ export const api = {
       body: JSON.stringify({ email }),
     }),
 
+  // Delivery Notes
+  getDeliveryNotes: (params?: { branchId?: string; status?: string; invoiceId?: string; search?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.branchId) query.append('branchId', params.branchId);
+    if (params?.status) query.append('status', params.status);
+    if (params?.invoiceId) query.append('invoiceId', params.invoiceId);
+    if (params?.search) query.append('search', params.search);
+    return request<any[]>(`/delivery-notes?${query.toString()}`);
+  },
+  createDeliveryNote: (data: any) =>
+    request<any>('/delivery-notes', { method: 'POST', body: JSON.stringify(data) }),
+  generateDeliveryNoteFromInvoice: (invoiceId: string, data?: any) =>
+    request<{ success: boolean; deliveryNote: any; invoice: any }>(`/invoices/${invoiceId}/delivery-note`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    }),
+  updateDeliveryNoteStatus: (id: string, data: any) =>
+    request<{ success: boolean; deliveryNote: any }>(`/delivery-notes/${id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
   // Receipts
   getReceipts: (params?: { branchId?: string; search?: string }) => {
     const query = new URLSearchParams();
