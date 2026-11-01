@@ -246,6 +246,17 @@ export const PortalView: React.FC = () => {
 
   useEffect(() => {
     loadPortalData();
+    
+    // Check if customer had previous work
+    if (hadRestoredWork && !restoredBannerDismissed) {
+      const confirmRestore = window.confirm("You had items in your cart/session from your last visit. Would you like to view them again or explore further?");
+      if (confirmRestore) {
+        setRestoredBannerDismissed(true);
+      } else {
+        clearCustomerWorkspace();
+        setRestoredBannerDismissed(true);
+      }
+    }
   }, []);
 
   // Handle direct product linking & workspace restoration (open cart, active modal, scroll position)
