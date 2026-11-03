@@ -7,6 +7,7 @@ import { fiscalizeTransaction, enqueueKraRetry, kraRetryQueue } from './kra.js';
 import { sendEmail, generateInvoiceEmailHtml, generateReceiptEmailHtml, generateQuotationEmailHtml, generateWelcomeEmailHtml, emailLogs } from './email.js';
 import { initiateSTKPush, initiateB2CPayment, initiateB2BPayment } from './mpesa.js';
 import { getVapidPublicKey, sendWebPushNotification, broadcastPushNotification } from './push.js';
+import { generateInvoicePdf, generateQuotationPdf, generateReceiptPdf } from './pdfGenerator.js';
 
 export const apiRouter = Router();
 
@@ -382,7 +383,7 @@ apiRouter.get('/auth/staff-users', (req, res) => {
 
   const staff = db
     .getData()
-    .users.filter((u) => u.status === 'ACTIVE' && (u.role === 'STAFF' || Boolean(u.pin)))
+    .users.filter((u) => u.status === 'ACTIVE')
     .map((u) => {
       return {
         id: u.id,
@@ -441,15 +442,13 @@ apiRouter.post('/auth/pin-login', async (req, res) => {
     return res.status(403).json({ error: 'Staff account is inactive. Please contact administration.' });
   }
 
-  // Administrators cannot use cashier PIN login; must use master password
-  if (user.role === 'ADMIN') {
-    return res.status(403).json({ error: 'Administrators must sign in with master email & password credentials.' });
-  }
-
   const expectedPin = user.pin || '123456';
   const cleanPin = String(pin).trim();
 
-  if (cleanPin !== expectedPin) {
+  const isPinMatch = cleanPin === expectedPin;
+  const isPasswordMatch = user.passwordHash ? bcrypt.compareSync(cleanPin, user.passwordHash) : false;
+
+  if (!isPinMatch && !isPasswordMatch) {
     const failRecord = recordFailedAttempt(pinRateLimitKey);
     db.logAudit({
       userId: user.id,
@@ -1375,6 +1374,25 @@ apiRouter.post('/portal/checkout', async (req, res) => {
 
   db.getData().sales.unshift(sale);
 
+  // Auto-save customer contact
+  if (customerName) {
+    const existingCustomer = db.getData().customers.find(
+      (c) => c.name.toLowerCase() === customerName.toLowerCase() || (customerEmail && c.email === customerEmail)
+    );
+    if (!existingCustomer) {
+      db.getData().customers.unshift({
+        id: `cust-${Date.now()}`,
+        name: customerName,
+        email: customerEmail || "",
+        phone: customerPhone || "",
+        customerType: 'INDIVIDUAL',
+        creditLimit: 0,
+        currentBalance: 0,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
   const receiptRecord: PaymentReceipt = {
     id: uuidv4(),
     receiptNumber,
@@ -1395,15 +1413,27 @@ apiRouter.post('/portal/checkout', async (req, res) => {
   };
   db.getData().receipts.unshift(receiptRecord);
 
+  // Email receipt on success (auto-attach PDF)
   if (customerEmail && customerEmail.includes("@")) {
-    try {
-      const emailHtml = generateReceiptEmailHtml(receiptRecord, sale);
-      sendEmail({
-        to: customerEmail,
-        subject: `Payment Receipt ${receiptNumber} - Naisia Textiles & Uniforms`,
-        html: emailHtml,
-      });
-    } catch {}
+    (async () => {
+      try {
+        const pdfBuffer = await generateReceiptPdf(receiptRecord, db.getData().settings);
+        await sendEmail({
+          to: customerEmail,
+          subject: `Payment Receipt ${receiptNumber} - Naisia Textiles`,
+          html: generateReceiptEmailHtml(receiptRecord, db.getData().settings),
+          attachments: [
+            {
+              filename: `Receipt_${receiptNumber}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ],
+        });
+      } catch (err) {
+        console.error('Auto-receipt email failed:', err);
+      }
+    })();
   }
 
   await db.save();
@@ -1692,6 +1722,25 @@ apiRouter.post('/products', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT'), as
     details: `Added new uniform item: ${newProduct.name} (${newProduct.school}) with ${newProduct.variants.length} size variants`,
     ipAddress: req.ip,
   });
+
+  // Broadcast new product notification
+  try {
+    const cheapestVariant = newProduct.variants.reduce((prev, curr) => 
+      prev.sellingPrice < curr.sellingPrice ? prev : curr
+    );
+    broadcastPushNotification({
+      title: 'New Uniform Available!',
+      body: `${newProduct.name} for ${newProduct.school} is now available.`,
+      icon: imageUrl || undefined,
+      productData: {
+        name: newProduct.name,
+        price: cheapestVariant.sellingPrice,
+        imageUrl: imageUrl || '',
+      }
+    });
+  } catch (err) {
+    console.error('Failed to broadcast new product:', err);
+  }
 
   return res.status(201).json(newProduct);
 });
@@ -2760,13 +2809,27 @@ apiRouter.post('/quotations/:id/convert-to-invoice', requireAuth, requireRoles('
     ipAddress: req.ip,
   });
 
-  // Dispatch Email Notification
+  // Dispatch Email Notification with attached PDF
   if (invoice.customerEmail) {
-    sendEmail({
-      to: invoice.customerEmail,
-      subject: `Invoice ${invoice.invoiceNumber} from Naisia Textiles`,
-      html: generateInvoiceEmailHtml(invoice, db.getData().settings),
-    }).catch(console.error);
+    (async () => {
+      try {
+        const pdfBuffer = await generateInvoicePdf(invoice, db.getData().settings);
+        await sendEmail({
+          to: invoice.customerEmail,
+          subject: `Invoice ${invoice.invoiceNumber} from Naisia Textiles`,
+          html: generateInvoiceEmailHtml(invoice, db.getData().settings),
+          attachments: [
+            {
+              filename: `Invoice_${invoice.invoiceNumber}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ],
+        });
+      } catch (mailErr) {
+        console.error('Invoice conversion email dispatch failed:', mailErr);
+      }
+    })();
   }
 
   return res.json({ success: true, invoice, quotation: quote });
@@ -2793,7 +2856,7 @@ apiRouter.get('/invoices', requireAuth, (req, res) => {
   return res.json(invoices);
 });
 
-apiRouter.post('/invoices', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT'), async (req: AuthenticatedRequest, res: Response) => {
+apiRouter.post('/invoices', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const {
     branchId,
     customerId,
@@ -2917,11 +2980,25 @@ apiRouter.post('/invoices', requireAuth, requireRoles('ADMIN', 'ACCOUNTANT'), as
   });
 
   if (customerEmail) {
-    sendEmail({
-      to: customerEmail,
-      subject: `New Invoice ${invoice.invoiceNumber} from Naisia Textiles`,
-      html: generateInvoiceEmailHtml(invoice, db.getData().settings),
-    }).catch(console.error);
+    (async () => {
+      try {
+        const pdfBuffer = await generateInvoicePdf(invoice, db.getData().settings);
+        await sendEmail({
+          to: customerEmail,
+          subject: `New Invoice ${invoice.invoiceNumber} from Naisia Textiles`,
+          html: generateInvoiceEmailHtml(invoice, db.getData().settings),
+          attachments: [
+            {
+              filename: `Invoice_${invoice.invoiceNumber}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ],
+        });
+      } catch (err) {
+        console.error('Invoice creation email dispatch failed:', err);
+      }
+    })();
   }
 
   return res.status(201).json(invoice);
@@ -3062,16 +3139,178 @@ apiRouter.get('/receipts', requireAuth, (req, res) => {
   return res.json(receipts.slice(0, max));
 });
 
+apiRouter.post('/receipts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const {
+    branchId,
+    customerId,
+    customerName,
+    customerEmail,
+    customerPhone,
+    amount,
+    paymentMethod,
+    paymentReference,
+    notes,
+    items,
+  } = req.body;
+
+  if (!customerName || amount === undefined || amount === null || Number(amount) <= 0) {
+    return res.status(400).json({ error: 'Customer name and a valid payment amount are required' });
+  }
+
+  const branches = db.getData().branches;
+  const branch = (branchId && branches.find((b) => b.id === branchId)) ||
+    (req.user?.branchId !== 'all' && branches.find((b) => b.id === req.user?.branchId)) ||
+    branches[0];
+
+  const receiptNumber = db.getNextSequence('RCP', db.getData().receipts, 'receiptNumber');
+  const now = new Date().toISOString();
+  const totalAmount = Number(amount);
+  const taxableAmount = Number((totalAmount / 1.16).toFixed(2));
+  const taxAmount = Number((totalAmount - taxableAmount).toFixed(2));
+
+  // KRA eTIMS Fiscalization
+  const fiscalResult = await fiscalizeTransaction(
+    {
+      invoiceOrReceiptNumber: receiptNumber,
+      totalAmount,
+      taxableAmount,
+      taxAmount,
+      zeroRatedAmount: 0,
+      customerName,
+      itemsCount: Array.isArray(items) && items.length > 0 ? items.length : 1,
+      branchCode: branch ? branch.code : 'NBI-UHR',
+    },
+    false
+  );
+
+  let saleId: string | undefined = undefined;
+  if (Array.isArray(items) && items.length > 0) {
+    saleId = uuidv4();
+    const sale: Sale = {
+      id: saleId,
+      receiptNumber,
+      branchId: branch ? branch.id : 'branch-nbi-cbd',
+      branchName: branch ? branch.name : 'All Branches (HQ)',
+      cashierId: req.user!.id,
+      cashierName: req.user!.name,
+      customerId: customerId || undefined,
+      customerName,
+      customerPhone: customerPhone || undefined,
+      customerEmail: customerEmail || undefined,
+      items: items.map((it: any) => ({
+        productId: it.productId || `custom-${Date.now()}`,
+        variantId: it.variantId || `var-${Date.now()}`,
+        productName: it.productName || it.name || 'Uniform Item',
+        sku: it.sku || `SKU-${Date.now()}`,
+        school: it.school || 'General',
+        size: it.size || 'Standard',
+        color: it.color || 'Standard',
+        quantity: Number(it.quantity || 1),
+        unitPrice: Number(it.unitPrice || totalAmount),
+        costPrice: Number(it.costPrice || 0),
+        taxRate: 0.16,
+        taxAmount: Number(((it.total || totalAmount) - (it.total || totalAmount) / 1.16).toFixed(2)),
+        discountAmount: Number(it.discountAmount || 0),
+        subtotal: Number(((it.total || totalAmount) / 1.16).toFixed(2)),
+        total: Number(it.total || totalAmount),
+      })),
+      subtotal: taxableAmount,
+      totalTax: taxAmount,
+      totalDiscount: 0,
+      totalAmount,
+      paymentMethod: paymentMethod || 'CASH',
+      paymentReference: paymentReference || undefined,
+      amountTendered: totalAmount,
+      changeGiven: 0,
+      status: 'COMPLETED',
+      kraStatus: fiscalResult.status,
+      cuInvoiceNumber: fiscalResult.cuInvoiceNumber || undefined,
+      kraControlCode: fiscalResult.kraControlCode || undefined,
+      kraQrCodeUrl: fiscalResult.kraQrCodeUrl || undefined,
+      kraSubmissionTimestamp: fiscalResult.timestamp,
+      createdAt: now,
+    };
+    db.getData().sales.unshift(sale);
+  }
+
+  const receipt: PaymentReceipt = {
+    id: uuidv4(),
+    receiptNumber,
+    saleId,
+    branchId: branch ? branch.id : 'branch-nbi-cbd',
+    branchName: branch ? branch.name : 'All Branches (HQ)',
+    customerId: customerId || 'cust-direct',
+    customerName,
+    amount: totalAmount,
+    paymentMethod: paymentMethod || 'CASH',
+    paymentReference: paymentReference || `REC-${Date.now().toString().slice(-6)}`,
+    notes: notes || 'Official Payment Receipt',
+    receivedBy: req.user!.id,
+    receivedByName: req.user!.name,
+    cuNumber: fiscalResult.cuInvoiceNumber || '013000000000001',
+    kraQrCodeUrl: fiscalResult.kraQrCodeUrl,
+    createdAt: now,
+  };
+
+  db.getData().receipts.unshift(receipt);
+  await db.save();
+
+  db.logAudit({
+    userId: req.user!.id,
+    userName: req.user!.name,
+    userRole: req.user!.role,
+    branchId: receipt.branchId,
+    branchName: receipt.branchName,
+    action: 'RECEIPT_CREATED',
+    entityType: 'RECEIPT',
+    entityId: receipt.receiptNumber,
+    details: `Official Receipt ${receipt.receiptNumber} generated for ${customerName} (KES ${totalAmount.toLocaleString()} via ${paymentMethod})`,
+    ipAddress: req.ip,
+  });
+
+  if (customerEmail && customerEmail.includes('@')) {
+    (async () => {
+      try {
+        const pdfBuffer = await generateReceiptPdf(receipt, db.getData().settings);
+        await sendEmail({
+          to: customerEmail,
+          subject: `Your Naisia Textiles Official Receipt - ${receipt.receiptNumber}`,
+          html: generateReceiptEmailHtml(receipt, db.getData().settings),
+          attachments: [
+            {
+              filename: `Receipt_${receipt.receiptNumber}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ],
+        });
+      } catch (err) {
+        console.error('Receipt creation email dispatch failed:', err);
+      }
+    })();
+  }
+
+  return res.status(201).json({ receipt, qrCodeDataUrl: fiscalResult.kraQrCodeUrl });
+});
+
 apiRouter.post('/receipts/:id/email', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { email } = req.body;
   const receipt = db.getData().receipts.find((r) => r.id === req.params.id);
   if (!receipt) return res.status(404).json({ error: 'Receipt not found' });
 
   const targetEmail = email || db.getData().settings.companyEmail;
+  const pdfBuffer = await generateReceiptPdf(receipt, db.getData().settings);
   const result = await sendEmail({
     to: targetEmail,
     subject: `Naisia Textiles Official Receipt - ${receipt.receiptNumber}`,
     html: generateReceiptEmailHtml(receipt, db.getData().settings),
+    attachments: [
+      {
+        filename: `Receipt_${receipt.receiptNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      },
+    ],
   });
 
   db.logAudit({
@@ -3083,7 +3322,7 @@ apiRouter.post('/receipts/:id/email', requireAuth, async (req: AuthenticatedRequ
     action: 'RECEIPT_EMAILED',
     entityType: 'RECEIPT',
     entityId: receipt.receiptNumber,
-    details: `Dispatched receipt ${receipt.receiptNumber} to ${targetEmail}`,
+    details: `Dispatched receipt ${receipt.receiptNumber} with attached PDF to ${targetEmail}`,
     ipAddress: req.ip,
   });
 
@@ -3100,10 +3339,18 @@ apiRouter.post('/invoices/:id/email', requireAuth, async (req: AuthenticatedRequ
     return res.status(400).json({ error: 'Valid customer email address is required' });
   }
 
+  const pdfBuffer = await generateInvoicePdf(invoice, db.getData().settings);
   const result = await sendEmail({
     to: targetEmail,
     subject: `Naisia Textiles Official Tax Invoice - ${invoice.invoiceNumber}`,
     html: generateInvoiceEmailHtml(invoice, db.getData().settings),
+    attachments: [
+      {
+        filename: `Invoice_${invoice.invoiceNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      },
+    ],
   });
 
   db.logAudit({
@@ -3115,7 +3362,7 @@ apiRouter.post('/invoices/:id/email', requireAuth, async (req: AuthenticatedRequ
     action: 'INVOICE_EMAILED',
     entityType: 'INVOICE',
     entityId: invoice.invoiceNumber,
-    details: `Dispatched invoice ${invoice.invoiceNumber} to ${targetEmail}`,
+    details: `Dispatched invoice ${invoice.invoiceNumber} with attached PDF to ${targetEmail}`,
     ipAddress: req.ip,
   });
 
@@ -3132,10 +3379,18 @@ apiRouter.post('/quotations/:id/email', requireAuth, async (req: AuthenticatedRe
     return res.status(400).json({ error: 'Valid customer email address is required' });
   }
 
+  const pdfBuffer = await generateQuotationPdf(quote, db.getData().settings);
   const result = await sendEmail({
     to: targetEmail,
     subject: `Naisia Textiles Official Quotation - ${quote.quotationNumber}`,
     html: generateQuotationEmailHtml(quote, db.getData().settings),
+    attachments: [
+      {
+        filename: `Quotation_${quote.quotationNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      },
+    ],
   });
 
   db.logAudit({
@@ -3147,11 +3402,39 @@ apiRouter.post('/quotations/:id/email', requireAuth, async (req: AuthenticatedRe
     action: 'QUOTATION_EMAILED',
     entityType: 'QUOTATION',
     entityId: quote.quotationNumber,
-    details: `Dispatched quotation ${quote.quotationNumber} to ${targetEmail}`,
+    details: `Dispatched quotation ${quote.quotationNumber} with attached PDF to ${targetEmail}`,
     ipAddress: req.ip,
   });
 
   return res.json({ success: true, result, sentTo: targetEmail });
+});
+
+// PDF Direct Download / Inspection Routes
+apiRouter.get('/invoices/:id/pdf', async (req, res) => {
+  const invoice = db.getData().invoices.find((i) => i.id === req.params.id || i.invoiceNumber === req.params.id);
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  const pdfBuffer = await generateInvoicePdf(invoice, db.getData().settings);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="Invoice_${invoice.invoiceNumber}.pdf"`);
+  return res.send(pdfBuffer);
+});
+
+apiRouter.get('/quotations/:id/pdf', async (req, res) => {
+  const quote = db.getData().quotations.find((q) => q.id === req.params.id || q.quotationNumber === req.params.id);
+  if (!quote) return res.status(404).json({ error: 'Quotation not found' });
+  const pdfBuffer = await generateQuotationPdf(quote, db.getData().settings);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="Quotation_${quote.quotationNumber}.pdf"`);
+  return res.send(pdfBuffer);
+});
+
+apiRouter.get('/receipts/:id/pdf', async (req, res) => {
+  const receipt = db.getData().receipts.find((r) => r.id === req.params.id || r.receiptNumber === req.params.id);
+  if (!receipt) return res.status(404).json({ error: 'Receipt not found' });
+  const pdfBuffer = await generateReceiptPdf(receipt, db.getData().settings);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="Receipt_${receipt.receiptNumber}.pdf"`);
+  return res.send(pdfBuffer);
 });
 
 // ==========================================

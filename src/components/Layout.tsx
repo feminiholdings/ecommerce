@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -27,7 +28,10 @@ import {
   UserCheck,
   Maximize2,
   Minimize2,
-  Shirt
+  Shirt,
+  Sun,
+  Moon,
+  FileText
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -64,6 +68,7 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
     inactivitySecondsLeft,
     extendSession,
   } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -122,6 +127,7 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
     {
       group: 'Billing & Accounts',
       items: [
+        { id: 'documents', label: 'Quick Document Hub', icon: FileText, highlight: true },
         { id: 'invoices', label: 'Invoices', icon: FileSpreadsheet },
         { id: 'quotations', label: 'Quotations', icon: FileCheck },
         { id: 'customers', label: 'Customers & Schools', icon: Users },
@@ -297,6 +303,16 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
               aria-label="Toggle Fullscreen"
             >
               {isFullscreen ? <Minimize2 className="w-5 h-5 text-[#FACB00]" /> : <Maximize2 className="w-5 h-5" />}
+            </button>
+
+            {/* Theme Toggle Button */}
+            <button
+              onClick={toggleTheme}
+              title={theme === 'dark' ? "Switch to Light Theme" : "Switch to Dark Theme"}
+              className="flex p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white/80 hover:text-white transition-all border border-white/15 items-center justify-center cursor-pointer"
+              aria-label="Toggle Theme"
+            >
+              {theme === 'dark' ? <Sun className="w-5 h-5 text-[#FACB00]" /> : <Moon className="w-5 h-5" />}
             </button>
 
             {/* 5. Logout Session Icon Button (Desktop Only - inside drawer on mobile) */}

@@ -1,5 +1,15 @@
+import fs from 'fs';
+import path from 'path';
 import { db } from './db.js';
 import nodemailer from 'nodemailer';
+
+const TEMPLATE_PATH = path.join(process.cwd(), 'server', 'emailTemplate.html');
+
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer | string;
+  contentType?: string;
+}
 
 export interface EmailLog {
   id: string;
@@ -10,6 +20,8 @@ export interface EmailLog {
   status: 'SENT' | 'QUEUED' | 'FAILED';
   error?: string;
   sentAt: string;
+  hasAttachment?: boolean;
+  attachmentName?: string;
 }
 
 export const emailLogs: EmailLog[] = [];
@@ -18,10 +30,12 @@ export async function sendEmail({
   to,
   subject,
   html,
+  attachments,
 }: {
   to: string;
   subject: string;
   html: string;
+  attachments?: EmailAttachment[];
 }): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const settings = db.getData().settings;
   const fromEmail = settings.companyEmail || 'support@naisiaetextiles.com';
@@ -38,11 +52,13 @@ export async function sendEmail({
     htmlContent: html,
     status: 'QUEUED',
     sentAt: new Date().toISOString(),
+    hasAttachment: Array.isArray(attachments) && attachments.length > 0,
+    attachmentName: Array.isArray(attachments) && attachments.length > 0 ? attachments[0].filename : undefined,
   };
 
   try {
     if (!smtpPass) {
-      console.warn('[Zoho SMTP Notice] No SMTP password configured. Recording email in local audit log (Zoho Free send mode).');
+      console.warn(`[Zoho SMTP Notice] No SMTP password configured. Recording email with ${logEntry.hasAttachment ? `attached PDF (${logEntry.attachmentName})` : 'no attachments'} in local audit log.`);
       logEntry.status = 'SENT';
       emailLogs.unshift(logEntry);
       if (emailLogs.length > 500) emailLogs.pop();
@@ -59,19 +75,29 @@ export async function sendEmail({
       },
     });
 
-    const info = await transporter.sendMail({
+    const mailOptions: any = {
       from: `"Naisia Textiles" <${fromEmail}>`,
       to,
       subject,
       html,
-    });
+    };
+
+    if (attachments && attachments.length > 0) {
+      mailOptions.attachments = attachments.map((att) => ({
+        filename: att.filename,
+        content: att.content,
+        contentType: att.contentType || 'application/pdf',
+      }));
+    }
+
+    const info = await transporter.sendMail(mailOptions);
 
     logEntry.status = 'SENT';
     logEntry.id = info.messageId || logEntry.id;
     emailLogs.unshift(logEntry);
     if (emailLogs.length > 500) emailLogs.pop();
 
-    console.log(`[Zoho SMTP Email Sent Successfully] MessageId: ${info.messageId} to ${to}`);
+    console.log(`[Zoho SMTP Email Sent Successfully] MessageId: ${info.messageId} to ${to} with ${logEntry.hasAttachment ? `PDF attachment (${logEntry.attachmentName})` : 'no attachments'}`);
     return { success: true, messageId: info.messageId };
   } catch (err: any) {
     console.warn('[Zoho SMTP Dispatch Notice - Fallback to Audit Trail]:', err.message);
@@ -84,15 +110,16 @@ export async function sendEmail({
   }
 }
 
+
+const TEMPLATE = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+
+export function wrapInTemplate(bodyContent: string): string {
+  return TEMPLATE.replace('{{BODY_CONTENT}}', bodyContent);
+}
+
 // Templates
 export function generateInvoiceEmailHtml(invoice: any, settings: any): string {
-  return `
-    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 25px; border: 1px solid #E2E8F0; border-radius: 8px; color: #1E293B;">
-      <div style="background-color: #030A91; padding: 20px; border-radius: 6px; text-align: center; color: white;">
-        <h1 style="margin: 0; font-size: 24px; letter-spacing: 1px;">NAISIA TEXTILES</h1>
-        <p style="margin: 4px 0 0 0; font-size: 13px; color: #FACB00;">Quality School Uniforms & Educational Apparel</p>
-      </div>
-      <div style="padding: 20px 0;">
+  const body = `
         <h2 style="color: #030A91; margin-top: 0;">Official Invoice: ${invoice.invoiceNumber}</h2>
         <p>Dear <strong>${invoice.customerName}</strong>,</p>
         <p>Please find attached the official invoice for your school uniform order from Naisia Textiles.</p>
@@ -138,22 +165,12 @@ export function generateInvoiceEmailHtml(invoice: any, settings: any): string {
           <p>M-PESA Paybill: <strong>522522</strong> | Account: <strong>${invoice.invoiceNumber}</strong></p>
           <p>KRA PIN: ${settings.kraPin} | eTIMS Control: ${invoice.kraControlCode || 'OSCU-VERIFIED'}</p>
         </div>
-      </div>
-      <div style="background-color: #030A91; padding: 10px; border-radius: 6px; text-align: center; color: white; font-size: 12px;">
-        Naisia Textiles Ltd • Uhuru Market, Nairobi • Phone: 0792021496 / 0112264870 • support@naisiaetextiles.com • naisiaetextiles.com
-      </div>
-    </div>
   `;
+  return wrapInTemplate(body);
 }
 
 export function generateQuotationEmailHtml(quote: any, settings: any): string {
-  return `
-    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 25px; border: 1px solid #E2E8F0; border-radius: 8px; color: #1E293B;">
-      <div style="background-color: #030A91; padding: 20px; border-radius: 6px; text-align: center; color: white;">
-        <h1 style="margin: 0; font-size: 24px; letter-spacing: 1px;">NAISIA TEXTILES</h1>
-        <p style="margin: 4px 0 0 0; font-size: 13px; color: #FACB00;">Official Quotation & Uniform Estimates</p>
-      </div>
-      <div style="padding: 20px 0;">
+  const body = `
         <h2 style="color: #030A91; margin-top: 0;">Quotation: ${quote.quotationNumber}</h2>
         <p>Dear <strong>${quote.customerName}</strong>,</p>
         <p>Thank you for considering Naisia Textiles for your school uniform requirements. Below is your official quotation:</p>
@@ -196,22 +213,13 @@ export function generateQuotationEmailHtml(quote: any, settings: any): string {
           <p>Valid Until: <strong>${quote.validUntil}</strong></p>
           <p>${quote.terms || 'Prices inclusive of 16% VAT. Valid for 30 days.'}</p>
         </div>
-      </div>
-      <div style="background-color: #030A91; padding: 10px; border-radius: 6px; text-align: center; color: white; font-size: 12px;">
-        Naisia Textiles Ltd • Uhuru Market, Nairobi • Phone: 0792021496 / 0112264870 • support@naisiaetextiles.com • naisiaetextiles.com
-      </div>
-    </div>
   `;
+  return wrapInTemplate(body);
 }
 
 export function generateReceiptEmailHtml(receipt: any, settings: any): string {
-  return `
-    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; border: 1px solid #E2E8F0; border-radius: 8px; color: #1E293B;">
-      <div style="background-color: #030A91; padding: 15px; border-radius: 6px; text-align: center; color: white;">
-        <h2 style="margin: 0; font-size: 20px;">NAISIA TEXTILES</h2>
-        <p style="margin: 2px 0 0 0; font-size: 12px; color: #FACB00;">Official E-Receipt</p>
-      </div>
-      <div style="padding: 15px 0; text-align: center;">
+  const body = `
+        <div style="padding: 15px 0; text-align: center;">
         <p style="font-size: 14px; margin: 0; color: #64748B;">Receipt Number</p>
         <h3 style="font-size: 22px; margin: 4px 0; color: #030A91;">${receipt.receiptNumber}</h3>
         <p style="font-size: 13px; color: #10B981; font-weight: 600;">PAYMENT CONFIRMED</p>
@@ -228,17 +236,12 @@ export function generateReceiptEmailHtml(receipt: any, settings: any): string {
           Thank you for shopping with Naisia Textiles. Please retain this receipt for warranty and exchange.
         </p>
       </div>
-    </div>
   `;
+  return wrapInTemplate(body);
 }
 
 export function generateWelcomeEmailHtml(customerName: string, settings: any): string {
-  return `
-    <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; border: 1px solid #E2E8F0; border-radius: 8px; color: #1E293B;">
-      <div style="background-color: #030A91; padding: 18px; border-radius: 6px; text-align: center; color: white;">
-        <h2 style="margin: 0; font-size: 22px;">NAISIA TEXTILES</h2>
-        <p style="margin: 4px 0 0 0; font-size: 12px; color: #FACB00; font-weight: bold; letter-spacing: 1px;">WELCOME TO OUR FAMILY</p>
-      </div>
+  const body = `
       <div style="padding: 20px 0; text-align: left;">
         <h3 style="font-size: 18px; margin: 0 0 10px 0; color: #030A91;">Hello ${customerName},</h3>
         <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 14px 0;">
@@ -253,7 +256,7 @@ export function generateWelcomeEmailHtml(customerName: string, settings: any): s
           Thank you for choosing Naisia Textiles — Kenya's premier school uniform and apparel manufacturer.
         </p>
       </div>
-    </div>
   `;
+  return wrapInTemplate(body);
 }
 

@@ -22,6 +22,15 @@ export interface User {
   lastLogin?: string;
 }
 
+export interface StaffUserItem {
+  id: string;
+  name: string;
+  role: UserRole | string;
+  branchId: string;
+  branchName?: string;
+  pin?: string;
+}
+
 export interface Branch {
   id: string;
   code: string;

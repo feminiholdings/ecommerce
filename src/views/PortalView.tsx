@@ -622,14 +622,6 @@ export const PortalView: React.FC = () => {
 
           {/* Header Action Controls: ONLY TWO ICONS (Cart & Hamburger) */}
           <div className="flex items-center space-x-2 sm:space-x-2.5 shrink-0">
-            {isAdmin && (
-              <a
-                href="/"
-                className="px-3 py-1.5 rounded-xl bg-[#FACB00] text-[#030A91] font-black text-[10px] sm:text-xs hover:bg-yellow-400 transition-colors shadow-sm"
-              >
-                Access Admin Dashboard
-              </a>
-            )}
             {/* 1. Shopping Bag Icon Button with Counter Badge */}
             <button
               onClick={() => {

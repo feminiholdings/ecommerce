@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { NotificationProvider, useNotification } from './context/NotificationContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { LoginView } from './views/LoginView';
@@ -28,6 +29,7 @@ import { ContactUsView } from './views/pages/ContactUsView';
 import { UniformsView } from './views/pages/UniformsView';
 import { ProductDetailView } from './views/pages/ProductDetailView';
 import { GalleryView } from './views/pages/GalleryView';
+import { DocumentGeneratorView } from './views/DocumentGeneratorView';
 import { getSessionSnapshot, saveSessionSnapshot } from './utils/sessionManager';
 
 const AppContent: React.FC = () => {
@@ -97,11 +99,13 @@ const AppContent: React.FC = () => {
 
     const publicPaths = ['/', '/portal', '/about', '/policy', '/terms', '/terms-and-conditions', '/contact', '/school-uniforms', '/kmtc-uniforms', '/customized-uniforms'];
     const isProductPage = /^\/product\/[^/]+\/?$/.test(path);
-    const isInternalArea = !publicPaths.includes(path) && !isProductPage && path !== '/erp' && path !== '/login';
+    const isPublic = publicPaths.includes(path) || isProductPage;
     
-    if (isInternalArea) {
+    if (!isPublic) {
       robotsMeta.content = 'noindex, nofollow, noarchive, nosnippet';
-      document.title = 'Naisiae ERP - Staff & Administration Portal';
+      document.title = (path.startsWith('/docs') || path.startsWith('/documents') || path.startsWith('/quick-docs') || path.startsWith('/billing-hub'))
+        ? 'Restricted Billing & Document Hub - Naisiae Textiles'
+        : 'Naisiae ERP - Staff & Administration Portal';
     } else {
       robotsMeta.content = 'index, follow, max-image-preview:large';
       document.title = 'Naisiae Textiles - Official School Uniforms & Corporate Garments Portal';
@@ -123,6 +127,9 @@ const AppContent: React.FC = () => {
   if (normalizedPath === '/school-uniforms') return <UniformsView type="School Uniforms" />;
   if (normalizedPath === '/kmtc-uniforms') return <UniformsView type="KMTC Uniforms" />;
   if (normalizedPath === '/customized-uniforms') return <UniformsView type="Customized Uniforms" />;
+  if (normalizedPath === '/docs' || normalizedPath === '/documents' || normalizedPath === '/quick-docs' || normalizedPath === '/billing-hub') {
+    return <DocumentGeneratorView />;
+  }
 
   // ERP Login and Admin
   if (normalizedPath === '/erp' || normalizedPath === '/login' || normalizedPath === '/admin') {
@@ -181,6 +188,8 @@ const AppContent: React.FC = () => {
           return <SettingsView />;
         case 'gallery':
           return <GalleryView />;
+        case 'documents':
+          return <DocumentGeneratorView />;
         default:
           return <DashboardView onNavigate={setCurrentView} />;
       }
@@ -200,9 +209,11 @@ export default function App() {
   return (
     <ErrorBoundary>
       <NotificationProvider>
-        <AuthProvider>
-          <AppContent />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <AppContent />
+          </AuthProvider>
+        </ThemeProvider>
       </NotificationProvider>
     </ErrorBoundary>
   );

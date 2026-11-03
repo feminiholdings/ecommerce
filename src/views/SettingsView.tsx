@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../api';
 import { SystemSettings } from '../types';
 import { useNotification } from '../context/NotificationContext';
-import { Settings, Save, Mail, Download, ShieldCheck, Building2, CheckCircle2, Bell } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+import { Settings, Save, Mail, Download, ShieldCheck, Building2, CheckCircle2, Bell, Sun, Moon } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
   const { notify } = useNotification();
+  const { theme, toggleTheme } = useTheme();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [testEmailTo, setTestEmailTo] = useState('');
@@ -134,6 +136,43 @@ export const SettingsView: React.FC = () => {
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
+        {/* User Interface & Display Theme */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+          <div className="flex items-center space-x-2 pb-3 border-b border-slate-100">
+            {theme === 'dark' ? <Moon className="w-4 h-4 text-[#FACB00]" /> : <Sun className="w-4 h-4 text-[#030A91]" />}
+            <h3 className="font-bold text-sm text-slate-900">User Interface & Display Theme</h3>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-bold text-xs text-slate-800 block">Appearance Mode</span>
+              <span className="text-[11px] text-slate-500">
+                Choose between Light and Dark mode. Your preference is persisted automatically.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`px-4 py-2 rounded-xl text-xs font-black flex items-center space-x-2 transition-all shadow-xs ${
+                theme === 'dark'
+                  ? 'bg-slate-900 text-[#FACB00] border border-slate-700'
+                  : 'bg-[#030A91] text-white hover:bg-blue-900'
+              }`}
+            >
+              {theme === 'dark' ? (
+                <>
+                  <Sun className="w-4 h-4 text-[#FACB00]" />
+                  <span>Switch to Light Mode</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-4 h-4 text-[#FACB00]" />
+                  <span>Switch to Dark Mode</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Company Identity */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center space-x-2 pb-3 border-b border-slate-100">

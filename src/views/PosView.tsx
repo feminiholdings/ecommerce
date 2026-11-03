@@ -414,6 +414,15 @@ export const PosView: React.FC = () => {
             </div>
 
             <div className="flex items-center space-x-2">
+              <a
+                href="/documents"
+                className="inline-flex items-center px-2.5 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold hover:bg-amber-100 transition-colors shadow-2xs"
+                title="Generate Invoices, Quotes & Receipts with PIN"
+              >
+                <FileText className="w-3.5 h-3.5 mr-1 text-amber-700" />
+                <span>Quick Docs</span>
+              </a>
+
               <button
                 onClick={handleOpenRecentSales}
                 className="inline-flex items-center px-2.5 py-1.5 rounded-xl bg-blue-50 text-[#030A91] border border-blue-200 text-xs font-bold hover:bg-blue-100 transition-colors shadow-2xs"

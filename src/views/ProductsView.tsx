@@ -1492,8 +1492,8 @@ export const ProductsView: React.FC = () => {
                             type="url"
                             value={editImageUrl}
                             onChange={(e) => setEditImageUrl(e.target.value)}
-                            placeholder="Paste Google Drive sharing link or web image URL..."
-                            className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-[#030A91]"
+                            placeholder="Paste new Google Drive link or web image URL..."
+                            className="w-full pl-9 pr-3 py-3 bg-white border-2 border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-[#030A91]"
                           />
                         </div>
                         <p className="text-[10px] text-slate-500">

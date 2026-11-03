@@ -354,12 +354,29 @@ export const api = {
     }),
 
   // Receipts
-  getReceipts: (params?: { branchId?: string; search?: string }) => {
+  getReceipts: (params?: { branchId?: string; search?: string; limit?: number }) => {
     const query = new URLSearchParams();
     if (params?.branchId) query.append('branchId', params.branchId);
     if (params?.search) query.append('search', params.search);
+    if (params?.limit) query.append('limit', params.limit.toString());
     return request<any[]>(`/receipts?${query.toString()}`);
   },
+  createReceipt: (data: {
+    branchId?: string;
+    customerId?: string;
+    customerName: string;
+    customerEmail?: string;
+    customerPhone?: string;
+    amount: number;
+    paymentMethod?: string;
+    paymentReference?: string;
+    notes?: string;
+    items?: any[];
+  }) =>
+    request<{ receipt: any; qrCodeDataUrl?: string }>('/receipts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   emailReceipt: (id: string, email?: string) =>
     request<{ success: boolean }>(`/receipts/${id}/email`, {
       method: 'POST',

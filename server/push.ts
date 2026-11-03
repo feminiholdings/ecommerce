@@ -34,7 +34,7 @@ export function getVapidPublicKey() {
   return publicVapidKey;
 }
 
-export async function sendWebPushNotification(subscription: any, payload: { title: string; body: string; url?: string; icon?: string }) {
+export async function sendWebPushNotification(subscription: any, payload: { title: string; body: string; url?: string; icon?: string; productData?: { name: string; price: number; imageUrl: string } }) {
   try {
     const dataString = JSON.stringify(payload);
     await webpush.sendNotification(subscription, dataString);
@@ -45,7 +45,7 @@ export async function sendWebPushNotification(subscription: any, payload: { titl
   }
 }
 
-export async function broadcastPushNotification(payload: { title: string; body: string; url?: string; icon?: string }) {
+export async function broadcastPushNotification(payload: { title: string; body: string; url?: string; icon?: string; productData?: { name: string; price: number; imageUrl: string } }) {
   const dbData = db.getData() as any;
   if (!Array.isArray(dbData.pushSubscriptions) || dbData.pushSubscriptions.length === 0) {
     return { sentCount: 0 };
