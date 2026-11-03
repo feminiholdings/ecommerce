@@ -31,6 +31,10 @@ async function startServer() {
   app.use((req, res, next) => {
     const rawPath = req.path.toLowerCase();
     const isDisallowedArea =
+      rawPath.startsWith('/docs') ||
+      rawPath.startsWith('/documents') ||
+      rawPath.startsWith('/quick-docs') ||
+      rawPath.startsWith('/billing-hub') ||
       rawPath.startsWith('/erp') ||
       rawPath.startsWith('/admin') ||
       rawPath.startsWith('/login') ||

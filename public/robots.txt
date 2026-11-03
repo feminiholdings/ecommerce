@@ -58,6 +58,14 @@ Disallow: /audit
 Disallow: /audit/
 Disallow: /settings
 Disallow: /settings/
+Disallow: /docs
+Disallow: /docs/
+Disallow: /documents
+Disallow: /documents/
+Disallow: /quick-docs
+Disallow: /quick-docs/
+Disallow: /billing-hub
+Disallow: /billing-hub/
 Disallow: /api/
 
 # Sitemap location
