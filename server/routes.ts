@@ -908,9 +908,27 @@ apiRouter.post('/mpesa/stkpush', async (req, res) => {
   }
 });
 
-apiRouter.post('/mpesa/callback', (req, res) => {
-  // Handle callback from M-Pesa
-  console.log('M-Pesa Callback received:', req.body);
+apiRouter.post('/mpesa/callback', async (req, res) => {
+  const { Body } = req.body;
+  const stkCallback = Body?.stkCallback;
+  if (!stkCallback) return res.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid Callback' });
+
+  const checkoutRequestId = stkCallback.CheckoutRequestID;
+  const resultCode = stkCallback.ResultCode; // 0 = Success
+  
+  const sale = db.getData().sales.find(s => s.paymentReference === checkoutRequestId);
+  
+  if (sale) {
+    if (resultCode === 0) {
+      sale.status = 'COMPLETED';
+      console.log(`[M-Pesa Callback] Sale ${sale.receiptNumber} completed successfully.`);
+    } else {
+      sale.status = 'VOIDED';
+      console.log(`[M-Pesa Callback] Sale ${sale.receiptNumber} failed and was voided. Code: ${resultCode}`);
+    }
+    await db.save();
+  }
+
   res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
 });
 
@@ -1064,7 +1082,7 @@ apiRouter.post('/portal/checkout', async (req, res) => {
     paymentReference: paymentReference || undefined,
     amountTendered: totalAmount,
     changeGiven: 0,
-    status: "COMPLETED",
+    status: "PENDING",
     kraStatus: fiscalResult.status,
     cuInvoiceNumber: fiscalResult.cuInvoiceNumber || undefined,
     kraControlCode: fiscalResult.kraControlCode || undefined,

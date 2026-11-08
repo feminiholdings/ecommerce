@@ -150,7 +150,7 @@ export interface Sale {
   paymentReference?: string; // M-Pesa transaction code e.g. 'QKJ928374'
   amountTendered: number;
   changeGiven: number;
-  status: 'COMPLETED' | 'REFUNDED' | 'VOIDED';
+  status: 'COMPLETED' | 'REFUNDED' | 'VOIDED' | 'PENDING';
   refundReason?: string;
   // KRA eTIMS Fiscal fields
   kraStatus: 'FISCALIZED' | 'PENDING' | 'FAILED';
