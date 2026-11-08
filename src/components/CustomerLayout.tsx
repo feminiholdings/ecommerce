@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Menu, X, ShieldCheck, Shirt, Info, FileText, Phone, Building, Search, LayoutGrid, ShoppingCart } from 'lucide-react';
-import { getCustomerCart } from '../utils/customerSessionManager';
+import React, { useState } from 'react';
+import { Menu, X, ShieldCheck, Shirt, Info, FileText, Phone, Building, Search, LayoutGrid, Briefcase, Award } from 'lucide-react';
 
 interface CustomerLayoutProps {
   children: React.ReactNode;
@@ -8,39 +7,22 @@ interface CustomerLayoutProps {
 
 export const CustomerLayout: React.FC<CustomerLayoutProps> = ({ children }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [cartCount, setCartCount] = useState<number>(() => {
-    try {
-      const items = getCustomerCart();
-      return Array.isArray(items) ? items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0;
-    } catch {
-      return 0;
-    }
-  });
 
-  useEffect(() => {
-    const updateCount = () => {
-      try {
-        const items = getCustomerCart();
-        setCartCount(Array.isArray(items) ? items.reduce((sum, item) => sum + (item.quantity || 1), 0) : 0);
-      } catch {
-        setCartCount(0);
-      }
-    };
+  const headerLinks = [
+    { label: 'School Uniforms', href: '/school-uniforms' },
+    { label: 'KMTC & Colleges', href: '/kmtc-uniforms' },
+    { label: 'About Us', href: '/about' },
+    { label: 'Contact Us', href: '/contact' },
+  ];
 
-    window.addEventListener('storage', updateCount);
-    const interval = setInterval(updateCount, 1500);
-    return () => {
-      window.removeEventListener('storage', updateCount);
-      clearInterval(interval);
-    };
-  }, []);
-
-  const navLinks = [
+  const drawerNavLinks = [
     { label: 'School Uniforms', href: '/school-uniforms', icon: Shirt },
     { label: 'KMTC Uniforms', href: '/kmtc-uniforms', icon: Building },
-    { label: 'Customized Uniforms', href: '/customized-uniforms', icon: ShieldCheck },
+    { label: 'Customized & Corporate', href: '/customized-uniforms', icon: ShieldCheck },
+    { label: 'Security Forces', href: '/security-uniforms', icon: ShieldCheck },
+    { label: 'Hospitality & Chef', href: '/hospitality-uniforms', icon: Shirt },
+    { label: 'Workwear & Overalls', href: '/workwear', icon: LayoutGrid },
     { label: 'About', href: '/about', icon: Info },
-    { label: 'Policy & Terms', href: '/policy', icon: FileText },
     { label: 'Contact Us', href: '/contact', icon: Phone },
   ];
 
@@ -73,38 +55,19 @@ export const CustomerLayout: React.FC<CustomerLayoutProps> = ({ children }) => {
             </div>
           </div>
 
-          {/* Header Action Controls (Persistent Cart Bag & Mobile Menu) */}
-          <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
-            {/* Customer Persistent Cart Button */}
-            <a
-              href="/portal?openCart=true"
-              className="relative p-2.5 sm:p-3 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm flex items-center space-x-1.5"
-              title={`Your Shopping Bag (${cartCount} items)`}
-              aria-label="View Shopping Bag"
-            >
-              <ShoppingCart className="w-5 h-5 text-[#030A91]" />
-              <span className="hidden sm:inline text-xs font-black text-[#030A91]">Cart</span>
-              {cartCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-[#FACB00] text-[#030A91] text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-xs">
-                  {cartCount > 99 ? '99+' : cartCount}
-                </span>
-              )}
-            </a>
-
-            {/* Mobile Hamburger Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="lg:hidden p-2.5 sm:p-3 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm"
-              aria-label="Open Menu"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-          </div>
+          {/* Mobile Hamburger Button */}
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="lg:hidden p-2.5 rounded-2xl bg-white hover:bg-slate-100 active:scale-95 text-[#030A91] transition-all border border-slate-200 shadow-sm"
+            aria-label="Open Menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Desktop Menu */}
-        <div className="hidden lg:flex justify-center py-2 bg-white/10 backdrop-blur-xs border-t border-white/5 text-[11px] font-bold tracking-wider text-white gap-8 relative z-10">
-          {navLinks.map((link) => (
+        {/* Desktop Menu - Clean, spacious layout */}
+        <div className="hidden lg:flex justify-center py-2.5 bg-white/10 backdrop-blur-xs border-t border-white/5 text-xs font-bold tracking-wider text-white gap-10 relative z-10">
+          {headerLinks.map((link) => (
             <a key={link.href} href={link.href} className="hover:text-[#FACB00] transition-colors">{link.label}</a>
           ))}
         </div>
@@ -156,7 +119,7 @@ export const CustomerLayout: React.FC<CustomerLayoutProps> = ({ children }) => {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <div className="grid grid-cols-1 gap-2">
-                {navLinks.map((link) => (
+                {drawerNavLinks.map((link) => (
                   <a
                     key={link.href}
                     href={link.href}
@@ -216,12 +179,37 @@ export const CustomerLayout: React.FC<CustomerLayoutProps> = ({ children }) => {
         </div>
       </nav>
 
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 pt-6 pb-24 md:py-8">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 pt-4 pb-24 md:py-6 flex flex-col space-y-6">
+        {/* CATEGORY QUICK ACCESS CARDS BELOW HEADER ON ALL PAGES */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {[
+            { name: 'School Uniforms', href: '/school-uniforms', icon: Shirt, count: 'Primary & High', color: 'from-blue-600 to-indigo-700' },
+            { name: 'KMTC & Colleges', href: '/kmtc-uniforms', icon: Building, count: 'Medical & Tertiary', color: 'from-emerald-600 to-teal-700' },
+            { name: 'Corporate', href: '/customized-uniforms', icon: Briefcase, count: 'Custom Branding', color: 'from-amber-600 to-yellow-700' },
+            { name: 'Security Forces', href: '/security-uniforms', icon: ShieldCheck, count: 'Guard & Uniform', color: 'from-slate-700 to-slate-900' },
+            { name: 'Hospitality & Chef', href: '/hospitality-uniforms', icon: Award, count: 'Kitchen & Hotel', color: 'from-rose-600 to-pink-700' },
+            { name: 'Workwear & Overalls', href: '/workwear', icon: LayoutGrid, count: 'Industrial Gear', color: 'from-cyan-600 to-blue-700' },
+          ].map((cat) => (
+            <a
+              key={cat.name}
+              href={cat.href}
+              className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-[#030A91]/40 transition-all group flex flex-col items-center text-center relative overflow-hidden"
+            >
+              <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${cat.color}`} />
+              <div className="w-10 h-10 rounded-xl bg-slate-100 group-hover:bg-[#030A91] text-[#030A91] group-hover:text-white flex items-center justify-center transition-colors mb-2 shadow-xs">
+                <cat.icon className="w-5 h-5" />
+              </div>
+              <h3 className="font-black text-xs text-slate-800 group-hover:text-[#030A91] transition-colors leading-tight mb-0.5">{cat.name}</h3>
+              <p className="text-[10px] font-medium text-slate-400">{cat.count}</p>
+            </a>
+          ))}
+        </div>
+
         {children}
       </main>
 
-      <footer className="hidden md:block bg-[#030A91] text-white p-4 text-center text-[10px]">
-        <p>© 2026 Naisiae Textiles Ltd. All rights reserved.</p>
+      <footer className="hidden md:block bg-[#030A91] text-white p-4 text-center text-[11px] font-medium border-t border-white/10">
+        <p>© 2026 Naisiae Textiles Ltd. All rights reserved. &nbsp;|&nbsp; Powered by <a href="https://urbantechdev.com" target="_blank" rel="noopener noreferrer" className="text-[#FACB00] hover:underline font-bold">UrbanTechDev</a></p>
       </footer>
     </div>
   );

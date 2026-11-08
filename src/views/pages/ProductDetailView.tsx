@@ -39,14 +39,14 @@ export const ProductDetailView: React.FC<{ productId: string }> = ({ productId }
 
   useEffect(() => {
     if (!product) return;
-    document.title = `${product.name} | Naisiae Textiles`;
+    document.title = `${product.name} | Uhuru Market Uniforms – Naisiae Textiles`;
     let description = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
     if (!description) {
       description = document.createElement('meta');
       description.name = 'description';
       document.head.appendChild(description);
     }
-    description.content = `${product.name} from Naisiae Textiles. View available sizes and order online in Kenya.`;
+    description.content = `Buy ${product.name} at Uhuru Market Uniforms (Naisiae Textiles). Premium quality school & institutional uniforms in Nairobi, Kenya.`;
     let canonical = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
     if (!canonical) {
       canonical = document.createElement('link');

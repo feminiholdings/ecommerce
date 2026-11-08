@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -25,13 +24,7 @@ import {
   Tag,
   CreditCard,
   FileCheck,
-  UserCheck,
-  Maximize2,
-  Minimize2,
-  Shirt,
-  Sun,
-  Moon,
-  FileText
+  UserCheck
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -55,42 +48,10 @@ interface NavGroup {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) => {
-  const {
-    user,
-    branches,
-    activeBranchId,
-    activeBranchName,
-    switchBranch,
-    logout,
-    canAccessAdmin,
-    canAccessFinancials,
-    isStaff,
-    inactivitySecondsLeft,
-    extendSession,
-  } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { user, branches, activeBranchId, activeBranchName, switchBranch, logout, canAccessAdmin, canAccessFinancials, isStaff } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const [lowStockCount, setLowStockCount] = useState(0);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen().catch(() => {});
-      }
-    }
-  };
 
   useEffect(() => {
     const fetchAlerts = async () => {
@@ -113,7 +74,6 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
         { id: 'pos', label: 'POS Terminal', icon: ShoppingCart, highlight: true },
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { id: 'receipts', label: 'Sales Receipts', icon: Receipt },
-        { id: 'gallery', label: 'Uniform Gallery', icon: Shirt },
       ],
     },
     {
@@ -127,7 +87,6 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
     {
       group: 'Billing & Accounts',
       items: [
-        { id: 'documents', label: 'Quick Document Hub', icon: FileText, highlight: true },
         { id: 'invoices', label: 'Invoices', icon: FileSpreadsheet },
         { id: 'quotations', label: 'Quotations', icon: FileCheck },
         { id: 'customers', label: 'Customers & Schools', icon: Users },
@@ -295,30 +254,10 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
               {user?.name.charAt(0)}
             </div>
 
-            {/* 4. Fullscreen Toggle Button (Desktop Only) */}
+            {/* 4. Logout Session Icon Button (Desktop Only - inside drawer on mobile) */}
             <button
-              onClick={toggleFullscreen}
-              title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-              className="hidden md:flex p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white/80 hover:text-white transition-all border border-white/15 items-center justify-center cursor-pointer"
-              aria-label="Toggle Fullscreen"
-            >
-              {isFullscreen ? <Minimize2 className="w-5 h-5 text-[#FACB00]" /> : <Maximize2 className="w-5 h-5" />}
-            </button>
-
-            {/* Theme Toggle Button */}
-            <button
-              onClick={toggleTheme}
-              title={theme === 'dark' ? "Switch to Light Theme" : "Switch to Dark Theme"}
-              className="flex p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white/80 hover:text-white transition-all border border-white/15 items-center justify-center cursor-pointer"
-              aria-label="Toggle Theme"
-            >
-              {theme === 'dark' ? <Sun className="w-5 h-5 text-[#FACB00]" /> : <Moon className="w-5 h-5" />}
-            </button>
-
-            {/* 5. Logout Session Icon Button (Desktop Only - inside drawer on mobile) */}
-            <button
-              onClick={() => logout(false)}
-              title="Logout Session (Manual)"
+              onClick={() => logout()}
+              title="Logout Session"
               className="hidden md:flex p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-rose-500/25 active:scale-95 text-white/80 hover:text-white transition-all border border-white/15 items-center justify-center cursor-pointer"
               aria-label="Logout"
             >
@@ -360,29 +299,6 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
           </svg>
         </div>
       </header>
-
-      {/* Floating 2-Minute Inactivity Warning Pill */}
-      {inactivitySecondsLeft <= 25 && inactivitySecondsLeft > 0 && (
-        <aside aria-label="Session Inactivity Warning" className="fixed top-18 right-3 sm:right-6 z-50 animate-bounce max-w-sm">
-          <div className="bg-amber-400 text-slate-950 font-bold px-3.5 py-2.5 rounded-2xl shadow-2xl flex items-center space-x-3 border-2 border-amber-300">
-            <span className="flex h-3 w-3 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-600 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
-            </span>
-            <div className="text-[11px] leading-tight">
-              <span className="font-black uppercase tracking-wider block text-slate-900">2-Min Idle Warning:</span>
-              <span>Auto logout in </span>
-              <strong className="font-mono text-xs underline text-rose-950 font-black">{inactivitySecondsLeft}s</strong>
-            </div>
-            <button
-              onClick={extendSession}
-              className="px-3 py-1 bg-slate-900 text-[#FACB00] hover:bg-slate-800 active:scale-95 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer"
-            >
-              Extend
-            </button>
-          </div>
-        </aside>
-      )}
 
       {/* ==================================================== */}
       {/* WORKSPACE: SIDEBAR & MAIN BODY (BELOW THE HEADER)    */}
@@ -442,9 +358,9 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
                 <p className="text-xs font-bold text-slate-800 truncate">{activeBranchName}</p>
               </div>
               <button
-                onClick={() => logout(false)}
-                title="Logout session (Manual)"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                onClick={() => logout()}
+                title="Logout session"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -761,8 +677,8 @@ export const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, childre
             </div>
 
             <button
-              onClick={() => logout(false)}
-              className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold active:scale-98 transition-all shadow-2xs cursor-pointer"
+              onClick={() => logout()}
+              className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold active:scale-98 transition-all shadow-2xs"
             >
               <LogOut className="w-4 h-4 text-rose-600" />
               <span>Sign Out of ERP</span>

@@ -108,7 +108,21 @@ const AppContent: React.FC = () => {
         : 'Naisiae ERP - Staff & Administration Portal';
     } else {
       robotsMeta.content = 'index, follow, max-image-preview:large';
-      document.title = 'Naisiae Textiles - Official School Uniforms & Corporate Garments Portal';
+      if (normalizedPath === '/' || normalizedPath === '/portal') {
+        document.title = 'Uhuru Market Uniforms – Naisia Textiles | #1 School Uniforms & Apparel Store Nairobi';
+      } else if (normalizedPath === '/school-uniforms') {
+        document.title = 'Uhuru Market School Uniforms – Primary & High School Attire | Naisiae Textiles';
+      } else if (normalizedPath === '/kmtc-uniforms') {
+        document.title = 'Uhuru Market KMTC & Medical Scrubs Uniforms | Naisiae Textiles';
+      } else if (normalizedPath === '/customized-uniforms') {
+        document.title = 'Uhuru Market Corporate & Custom Uniforms | Naisiae Textiles';
+      } else if (normalizedPath === '/about') {
+        document.title = 'About Uhuru Market Uniforms – Naisiae Textiles Nairobi';
+      } else if (normalizedPath === '/contact') {
+        document.title = 'Contact Uhuru Market Uniforms – Stalls 412–415, Uhuru Market Nairobi';
+      } else {
+        document.title = 'Uhuru Market Uniforms – Official Catalog | Naisiae Textiles';
+      }
     }
   }, [path, user, currentView]);
 
