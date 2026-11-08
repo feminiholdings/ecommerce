@@ -88,8 +88,31 @@ const AppContent: React.FC = () => {
   }, [restoredSessionSnapshot, user, notify, consumeRestoredNotice, currentView]);
 
   // Enforce search engine indexing rules:
-  // Customer portal is indexed; admin, cashier, accountant, and ERP are blocked from crawlers
+  // Portal is default
+  const normalizedPath = path.toLowerCase().replace(/\/$/, '') || '/';
+
+  // Enforce search engine indexing rules:
   useEffect(() => {
+    const setMeta = (name: string, content: string) => {
+      let meta = document.querySelector(`meta[name="${name}"]`);
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', name);
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute('content', content);
+    };
+
+    const setLink = (rel: string, href: string) => {
+      let link = document.querySelector(`link[rel="${rel}"]`);
+      if (!link) {
+        link = document.createElement('link');
+        link.setAttribute('rel', rel);
+        document.head.appendChild(link);
+      }
+      link.setAttribute('href', href);
+    };
+
     let robotsMeta = document.querySelector('meta[name="robots"]') as HTMLMetaElement | null;
     if (!robotsMeta) {
       robotsMeta = document.createElement('meta');
@@ -103,31 +126,35 @@ const AppContent: React.FC = () => {
     
     if (!isPublic) {
       robotsMeta.content = 'noindex, nofollow, noarchive, nosnippet';
-      document.title = (path.startsWith('/docs') || path.startsWith('/documents') || path.startsWith('/quick-docs') || path.startsWith('/billing-hub'))
-        ? 'Restricted Billing & Document Hub - Naisiae Textiles'
-        : 'Naisiae ERP - Staff & Administration Portal';
+      document.title = 'Naisia ERP - Staff & Administration Portal';
     } else {
       robotsMeta.content = 'index, follow, max-image-preview:large';
+      setLink('canonical', window.location.origin + path);
+
       if (normalizedPath === '/' || normalizedPath === '/portal') {
-        document.title = 'Uhuru Market Uniforms – Naisia Textiles | #1 School Uniforms & Apparel Store Nairobi';
+        document.title = 'Uhuru Market Uniforms – Naisia Textiles | #1 Apparel Store in Nairobi';
+        setMeta('description', 'Naisiae Textiles is the leading supplier of school and corporate apparel in Uhuru Market, Nairobi. Shop durable uniforms, medical scrubs, and custom branded wear.');
       } else if (normalizedPath === '/school-uniforms') {
-        document.title = 'Uhuru Market School Uniforms – Primary & High School Attire | Naisiae Textiles';
+        document.title = 'School Uniforms – Primary & High School Attire | Uhuru Market';
+        setMeta('description', 'High-quality school uniforms at Uhuru Market. We manufacture and supply durable kits for primary and secondary schools across Kenya.');
       } else if (normalizedPath === '/kmtc-uniforms') {
-        document.title = 'Uhuru Market KMTC & Medical Scrubs Uniforms | Naisiae Textiles';
+        document.title = 'KMTC & Medical Scrubs Uniforms | Naisiae Textiles';
+        setMeta('description', 'Durable KMTC scrubs and college clinical wear available at Uhuru Market Uniforms. Best quality medical apparel manufactured in Nairobi.');
       } else if (normalizedPath === '/customized-uniforms') {
-        document.title = 'Uhuru Market Corporate & Custom Uniforms | Naisiae Textiles';
+        document.title = 'Corporate & Custom Branded Uniforms | Naisiae Textiles';
+        setMeta('description', 'Custom branded corporate uniforms, security gear, and hospitality apparel manufactured in Uhuru Market, Nairobi. Premium quality and custom fits.');
       } else if (normalizedPath === '/about') {
-        document.title = 'About Uhuru Market Uniforms – Naisiae Textiles Nairobi';
+        document.title = 'About Naisiae Textiles | Apparel Manufacturing in Nairobi';
+        setMeta('description', 'Learn about Naisiae Textiles, a premier uniform manufacturer at Uhuru Market, Jogoo Road. Delivering durable, quality apparel since 2026.');
       } else if (normalizedPath === '/contact') {
-        document.title = 'Contact Uhuru Market Uniforms – Stalls 412–415, Uhuru Market Nairobi';
+        document.title = 'Contact Naisiae Textiles | Uhuru Market Store';
+        setMeta('description', 'Contact Naisiae Textiles. Visit our flagship store at Stalls 412–415, Uhuru Market, Jogoo Road, Nairobi, or call 0792021496.');
       } else {
-        document.title = 'Uhuru Market Uniforms – Official Catalog | Naisiae Textiles';
+        document.title = 'Official Catalog | Uhuru Market Uniforms by Naisiae Textiles';
+        setMeta('description', 'Explore the official catalog for quality school uniforms, medical college wear, and corporate apparel by Naisiae Textiles in Uhuru Market.');
       }
     }
-  }, [path, user, currentView]);
-
-  // Portal is default
-  const normalizedPath = path.toLowerCase().replace(/\/$/, '') || '/';
+  }, [path, user, currentView, normalizedPath]);
 
   const productPathMatch = normalizedPath.match(/^\/product\/([^/]+)$/);
   if (productPathMatch) return <ProductDetailView productId={decodeURIComponent(productPathMatch[1])} />;
