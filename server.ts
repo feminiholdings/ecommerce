@@ -19,22 +19,10 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
 
-  // Cross-Origin Isolation & Google Auth Popup Policy
-  // Allows Firebase Google Auth popup window (naisiae-erp.firebaseapp.com) to postMessage credentials back to opener
-  app.use((req, res, next) => {
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    next();
-  });
-
   // Search Engine Crawler Policy (Block Admin, Cashier, Accountant, ERP, and API from crawling)
   app.use((req, res, next) => {
     const rawPath = req.path.toLowerCase();
     const isDisallowedArea =
-      rawPath.startsWith('/docs') ||
-      rawPath.startsWith('/documents') ||
-      rawPath.startsWith('/quick-docs') ||
-      rawPath.startsWith('/billing-hub') ||
       rawPath.startsWith('/erp') ||
       rawPath.startsWith('/admin') ||
       rawPath.startsWith('/login') ||
