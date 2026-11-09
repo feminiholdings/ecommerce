@@ -150,7 +150,7 @@ export interface Sale {
   paymentReference?: string; // M-Pesa transaction code e.g. 'QKJ928374'
   amountTendered: number;
   changeGiven: number;
-  status: 'COMPLETED' | 'REFUNDED' | 'VOIDED' | 'PENDING';
+  status: 'COMPLETED' | 'REFUNDED' | 'VOIDED';
   refundReason?: string;
   // KRA eTIMS Fiscal fields
   kraStatus: 'FISCALIZED' | 'PENDING' | 'FAILED';
@@ -473,22 +473,6 @@ class DatabaseEngine {
           updated = true;
         }
 
-        if (!parsed.users || !parsed.users.some(u => u.email.toLowerCase() === 'naisiaetext@gmail.com')) {
-          if (!parsed.users) parsed.users = [];
-          parsed.users.push({
-            id: 'usr-admin-naisiaetext',
-            name: 'Naisia Administrator',
-            email: 'naisiaetext@gmail.com',
-            passwordHash: bcrypt.hashSync('Naisia@2026!', 10),
-            role: 'ADMIN',
-            branchId: 'all',
-            phone: '+254792021496',
-            status: 'ACTIVE',
-            createdAt: new Date().toISOString(),
-          });
-          updated = true;
-        }
-
         if (updated) {
           this.data = parsed;
           this.saveDataDirect(parsed);
@@ -567,20 +551,8 @@ class DatabaseEngine {
       },
     ];
 
-    // 2. Users (Ensure naisiaetext@gmail.com is seeded as ADMIN)
-    const users: User[] = [
-      {
-        id: 'usr-admin-naisiaetext',
-        name: 'Naisia Administrator',
-        email: 'naisiaetext@gmail.com',
-        passwordHash: bcrypt.hashSync('Naisia@2026!', 10),
-        role: 'ADMIN',
-        branchId: 'all',
-        phone: '+254792021496',
-        status: 'ACTIVE',
-        createdAt: now,
-      },
-    ];
+    // 2. Users (No mock or demo users seeded)
+    const users: User[] = [];
 
     // 3. Suppliers (Awaiting real creation)
     const suppliers: Supplier[] = [];
