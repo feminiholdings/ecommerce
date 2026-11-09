@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { db, User } from './db.js';
+import { db, User, UserRole } from './db.js';
 
 export interface AuthenticatedRequest extends Request {
   user?: User;
@@ -9,6 +9,88 @@ export interface AuthenticatedRequest extends Request {
 const SESSION_SECRET = process.env.SESSION_SECRET || 'naisiae-enterprise-session-secret-2026-kenya-etims';
 const revokedTokens: Set<string> = new Set();
 const legacySessions: Map<string, { userId: string; expiresAt: number }> = new Map();
+
+// ==========================================
+// RATE LIMITING & BRUTE FORCE PROTECTION
+// ==========================================
+interface AttemptRecord {
+  count: number;
+  firstAttempt: number;
+  lockedUntil?: number;
+}
+
+const loginAttempts: Map<string, AttemptRecord> = new Map();
+
+export function checkRateLimit(
+  key: string,
+  maxAttempts = 5,
+  lockDurationMs = 15 * 60 * 1000
+): { allowed: boolean; remainingAttempts: number; retryAfterSeconds?: number } {
+  const now = Date.now();
+  const record = loginAttempts.get(key);
+
+  if (!record) {
+    return { allowed: true, remainingAttempts: maxAttempts };
+  }
+
+  // Check if currently locked
+  if (record.lockedUntil && now < record.lockedUntil) {
+    return {
+      allowed: false,
+      remainingAttempts: 0,
+      retryAfterSeconds: Math.ceil((record.lockedUntil - now) / 1000),
+    };
+  }
+
+  // If window expired, reset
+  if (now - record.firstAttempt > lockDurationMs) {
+    loginAttempts.delete(key);
+    return { allowed: true, remainingAttempts: maxAttempts };
+  }
+
+  if (record.count >= maxAttempts) {
+    record.lockedUntil = now + lockDurationMs;
+    return {
+      allowed: false,
+      remainingAttempts: 0,
+      retryAfterSeconds: Math.ceil(lockDurationMs / 1000),
+    };
+  }
+
+  return { allowed: true, remainingAttempts: maxAttempts - record.count };
+}
+
+export function recordFailedAttempt(
+  key: string,
+  maxAttempts = 5,
+  lockDurationMs = 15 * 60 * 1000
+): { isLocked: boolean; remaining: number } {
+  const now = Date.now();
+  let record = loginAttempts.get(key);
+
+  if (!record || now - record.firstAttempt > lockDurationMs) {
+    record = { count: 1, firstAttempt: now };
+  } else {
+    record.count += 1;
+  }
+
+  if (record.count >= maxAttempts) {
+    record.lockedUntil = now + lockDurationMs;
+    loginAttempts.set(key, record);
+    return { isLocked: true, remaining: 0 };
+  }
+
+  loginAttempts.set(key, record);
+  return { isLocked: false, remaining: maxAttempts - record.count };
+}
+
+export function resetRateLimit(key: string): void {
+  loginAttempts.delete(key);
+}
+
+// ==========================================
+// SESSION MANAGEMENT (SIGNED HMAC-SHA256)
+// ==========================================
 
 export function createSession(userId: string): string {
   const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days validity
@@ -91,18 +173,19 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
   next();
 }
 
-export function requireRoles(...allowedRoles: ('ADMIN' | 'ACCOUNTANT' | 'STAFF')[]) {
+export function requireRoles(...allowedRoles: UserRole[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // No rules or restrictions applied to ADMIN: full system access
-    if (req.user.role === 'ADMIN') {
-      return next();
+    // SUPER_ADMIN has access to any endpoint that permits ADMIN
+    const effectiveRoles: UserRole[] = [...allowedRoles];
+    if (allowedRoles.includes('ADMIN') && !allowedRoles.includes('SUPER_ADMIN')) {
+      effectiveRoles.push('SUPER_ADMIN');
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
+    if (!effectiveRoles.includes(req.user.role)) {
       // Log unauthorized privilege escalation attempt in audit
       db.logAudit({
         userId: req.user.id,
