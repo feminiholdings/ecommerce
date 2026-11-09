@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import nodemailer from 'nodemailer';
 
 export interface EmailLog {
   id: string;
@@ -22,35 +23,43 @@ export async function sendEmail({
   subject: string;
   html: string;
 }): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  const settings = db.getData().settings;
-  const fromEmail = settings.companyEmail || 'support@naisiaetextiles.com';
-
-  const logEntry: EmailLog = {
-    id: `eml_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    to,
-    from: fromEmail,
-    subject,
-    htmlContent: html,
-    status: 'SENT',
-    sentAt: new Date().toISOString(),
+  // Production-hardened SMTP configuration for Vercel
+  const smtpConfig = {
+    host: process.env.SMTP_HOST || 'smtp.zoho.com',
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: (process.env.SMTP_SECURE || 'ssl') === 'ssl',
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
   };
 
-  // In production with live credentials (SMTP_PASS configured), an SMTP client connects to Zoho.
-  // Here we validate configuration and track real audit records of email dispatch.
-  const smtpHost = process.env.SMTP_HOST || settings.smtpHost || 'smtp.zoho.com';
-  const smtpUser = process.env.SMTP_USER || settings.smtpUser || 'support@naisiaetextiles.com';
-
-  console.log(`[Email Dispatcher] Sending email via ${smtpHost} from ${fromEmail} to ${to}: "${subject}"`);
-
-  emailLogs.unshift(logEntry);
-  if (emailLogs.length > 500) {
-    emailLogs.pop();
+  if (!smtpConfig.auth.user || !smtpConfig.auth.pass) {
+    console.error('[Email Configuration Error] SMTP credentials are missing in process.env');
+    return { success: false, error: 'SMTP credentials missing' };
   }
 
-  return {
-    success: true,
-    messageId: logEntry.id,
-  };
+  try {
+    const transporter = nodemailer.createTransport(smtpConfig);
+
+    const info = await transporter.sendMail({
+      from: process.env.SMTP_FROM || `"Naisia Textiles" <support@naisiaetextiles.com>`,
+      to,
+      subject,
+      html,
+    });
+
+    console.log(`[Email Dispatch Success] MessageId: ${info.messageId} to ${to}`);
+    return { success: true, messageId: info.messageId };
+  } catch (err: any) {
+    console.error('[Email Dispatch Failure]', {
+      subject,
+      to,
+      error: err.message,
+      stack: err.stack
+    });
+    return { success: false, error: err.message };
+  }
 }
 
 // Templates
